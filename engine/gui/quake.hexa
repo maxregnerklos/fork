@@ -1,0 +1,395 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Quake-style console with ~
+// TODO change to `Start + ~` and change engine to cmd.exe + tabs etc
+
+let quakeHeight UInt8 = 255 // TODO Hexa: `256` better error message aka too large to fit into u8
+var quakeCommand String = ""
+var quakePreviousCommand String = "help"
+// `var quakeLines [String] = [0]` // TODO `= [0]` not valid type
+var quakeLines [String] = []
+// TODO `= []` is inferred as `Array_$Any_$new_(0);`
+var quakeLine UInt8 = 0
+var quakeRow UInt8 = 0
+var quakeAdvance Float = 0.0
+var quakeCommandSize UInt8 = 0
+var haveToQuake Bool = false
+
+fun quake() {
+	if haveToQuake == false {
+		return
+	}
+
+	// TODO respect theme > set font color too
+	drawVibrancedRectangle(0, 0, _framebuffer.width as! UInt16, quakeHeight, darkTheme)
+	var color = new ByValue<Pixel32>()
+	color.ref.color = 0x126099FF
+	lineHorizontal(color, 0, quakeHeight, _framebuffer.width as! UInt16)
+	// color.rgba.r = color.rgba.g = color.rgba.b = 48
+	color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = darkTheme? 0xDDu8 : 0x11u8
+	var x = drawAsciiText(quakeCommand, 2, quakeHeight - 14u8, color.ref)
+	drawAsciiText("|", x + 2, quakeHeight - 15u8, color.ref)
+
+	for i in 17 {
+		if let line = quakeLines[i] {
+			drawAsciiText(line, 2, i * 14i16 + 2i16, color.ref)
+		}
+	}
+}
+
+fun quakeHandleButtonDown(key UInt8) {
+	// Up Arrow
+	if key == 72 {
+		quakeCommand = quakePreviousCommand
+		// TODO drop `quakeCommandSize`
+		quakeCommandSize = quakeCommand.length as! UInt8
+		requestAnimationFrame()
+		return
+	}
+
+	if keyboardMap[key] == null or keyboardMap[key].length == 0 {
+		return
+	}
+
+	if keyboardMap[key] == '\b' and quakeCommandSize > 0 {
+		quakeCommand = quakeCommand.substr(0, quakeCommand.length - 1)
+		quakeCommandSize--
+	}
+
+	if keyboardMap[key] == '\n' and quakeCommandSize > 0 {
+		quakePrintf("> ".utf16())
+		quakePrintf(quakeCommand.utf16())
+		quakePrintf("\n".utf16())
+		quakePreviousCommand = quakeCommand
+
+		// TODO `switch` lol + .meta for help
+		if quakeCommand == 'gdt' {
+			let gdt = gdtTemplate as! ArrayPointer<ByValue<GdtDescriptorEx>>
+			dumpGdtEntries(gdt)
+			quakePrintf("GDT was additionally logged into serial output\n".utf16())
+		} else if quakeCommand == 'reboot' {
+			// quakePrintf("Doing hot reload. Note: this log may be persistent between hot reloads\n".utf16())
+			// var start InitEngine = upper as! InitEngine // TODO `= (InitEngine)` compiles
+			// start(paramsCache) // TODO pml4, stack
+		} else if quakeCommand == 'dark' { // TODO startsWith
+			// Dark theme
+			darkTheme = true
+		} else if quakeCommand == 'light' {
+			// Light theme
+			darkTheme = false
+		} else if quakeCommand == 'blur' {
+			justBlur = not justBlur
+			// TODO sync to avoid race conditions
+			setWallpaper(wallpaperSource, WallpaperStyle.Center)
+			quakePrintf("Command completed.\n".utf16())
+		} else if quakeCommand == 'center' {
+			Theme.centeredStart = not Theme.centeredStart
+			quakePrintf("Command completed.\n".utf16())
+		} else if quakeCommand == 'fast' {
+			Theme.fast = not Theme.fast
+			if Theme.fast {
+				quakePrintf("Fast composition mode enabled.\n".utf16())
+			} else {
+				quakePrintf("Fast composition mode disabled.\n".utf16())
+			}
+		} else if quakeCommand == 'huge' {
+			Theme.hugeTaskbar = not Theme.hugeTaskbar
+			defaultSession.taskbarPin.enabled = not Theme.hugeTaskbar
+			defaultSession.taskbarPin.width = Theme.hugeTaskbar? 0i16 : 36i16
+			defaultSession.resize()
+			defaultSession.resizeWindowList()
+			quakePrintf("Command completed.\n".utf16())
+		} else if quakeCommand == 'exe' {
+			var index UInt64 = 0
+			while index < processes.length {
+				let process = processes[index]
+				index++
+
+				if process == null {
+					continue
+				}
+
+				if process.present != true {
+					continue
+				}
+
+				quakePrintf("%S pid:%d threads:%d syscall:%d ~#rip:%8 is64bit:%d\n".utf16(),
+					process.name.utf16(),
+					process.pid,
+					1, // TODO
+					process.syscallToHandle,
+					process.frame.ip,
+					process.is64bit
+				)
+			}
+		} else if quakeCommand == 'verbose' {
+			Theme.verbose = not Theme.verbose
+			quakePrintf("Command completed. You may now open any .exe and check the output.\n".utf16())
+		} else if quakeCommand == 'wallpaper' {
+			let a = getRamDiskAsset("root/Windows/Web/Wallpaper/Tofita/alternative.png")
+			wallpaperSource = loadPng32(a)
+			if wallpaperSource.width == 0 or wallpaperSource.height == 0 {
+				quakePrintf("Color palette format unsupported for the provided image file.\n".utf16())
+			} else {
+				setWallpaper(wallpaperSource, WallpaperStyle.Center)
+			}
+		} else if quakeCommand == 'help' {
+			quakePrintf("Hit `~` to show/hide this terminal at any time. At least those commands available:\n".utf16())
+			quakePrintf("dark - set the dark theme\n".utf16())
+			quakePrintf("light - set the light theme\n".utf16())
+			quakePrintf("blur - set alternative theme with slightly different aesthetics\n".utf16())
+			quakePrintf("gdt - dump Global Descriptor Table\n".utf16())
+			quakePrintf("exe - show running processes\n".utf16())
+			quakePrintf("verbose - print details when .exe is loaded\n".utf16())
+			quakePrintf("center - toggle centered Start menu\n".utf16())
+			quakePrintf("wallpaper - set alternative wallpaper\n".utf16())
+			quakePrintf("fast - faster screen rendering method\n".utf16())
+			quakePrintf("huge - large taskbar without labels\n".utf16())
+			// TODO quakePrintf("wallpaper - cycle wallpapers\n".utf16())//note this may crash compositor, in composite() check last!=new and load on demand
+			// TODO ACPI reboot quakePrintf("Enter 're' or 'reboot' to reboot the system\n".utf16())
+			// TODO ACPI power off quakePrintf("Enter 'po' or 'power' to shut down the system\n".utf16())
+			quakePrintf("Press UP to re-enter the last command\n".utf16())//
+		} else if quakeCommand == 'apt-get moo' or quakeCommand == "cowsay" {
+			// TODO print last command as `> %S`
+			quakePrintf('                 (__)
+                 (oo)
+           /------\\/
+          / |    ||
+         *  /\\---/\\
+            ~~   ~~\n'.utf16())
+		} else {
+			// TODO fix %S
+			quakePrintf("Command '%S' not supported\n".utf16(), quakeCommand.utf16())
+			quakePrintf("Enter 'help' for commands\n".utf16())
+		}
+		quakeCommand = ''
+		quakeCommandSize = 0
+	}
+
+	// TODO when no command entered, left/right buttons swap between different terminals,
+	// clicking right on the right most opens new terminal
+	// (show this as help in pale color)
+
+	// TODO support string comparisons `if (keyboardMap[key] >= 'a' and keyboardMap[key] <= 'z') or`
+	if let char = keyboardMap[key] {
+		let charCode = char.charCodeAt(0) as! UInt16 // TODO `?? 0`
+		// TODO nullables are incomparable, do some cool way to avoid this `if (charCode >= 'a'.charCodeAt(0) and charCode <= 'z'.charCodeAt(0)) or`
+		// TODO ^ better error `you are comparing nullable values`
+		if (charCode >= 97 and charCode <= 122) or
+			(charCode >= 48 and charCode <= 57) or (charCode == 32)
+			or (charCode == 45) {
+			if quakeCommandSize < 255 {
+				// quakeCommand += keyboardMap[key]
+				quakeCommand = quakeCommand + char
+				quakeCommandSize++
+			}
+		}
+	}
+
+	requestAnimationFrame()
+}
+
+var qsodHappened = false
+fun qsod(format ConstArrayPointer<ClangWideChar>, extra UInt64, more UInt64, other UInt64 = 0) {
+	qsodHappened = true
+	haveToQuake = true
+	quakePrintf("Engine stopped working. Please, reboot.\n".utf16())
+	quakePrintf(format, extra, more, other)
+	engineThreadLoop()
+	// TODO reboot (to not having to print error message to screen)
+}
+
+// TODO `private`
+fun quakeNewline() {
+	quakeLine++
+	quakeRow = 0
+	quakeAdvance = 0.0
+	if quakeLine == 17 {
+		// Move all lines upper
+		quakeLine = 16
+		for i in 16 {
+			quakeLines[i] = quakeLines[i + 1]
+		}
+		quakeLines[16] = ''
+	}
+}
+
+fun quakePutChar(c UInt8) UInt8 {
+	if c != 0 {
+		putChar(c) // Copy to serial log
+		if let char = '\n'.charCodeAt(0), c == char {
+			quakeNewline()
+			return c
+		}
+		quakeAdvance += getCharAdvance(c as! UInt8)
+		if quakeAdvance > _framebuffer.width {
+			quakeNewline()
+			quakeAdvance = getCharAdvance(c as! UInt8)
+		}
+
+		if quakeLines[quakeLine] == null {
+			quakeLines[quakeLine] = ``
+		}
+
+		// TODO how this should work then? `nullADD`?
+		quakeLines[quakeLine] += String.fromCharCode(c)
+		quakeRow++
+		if quakeRow > 255 {
+			quakeNewline()
+		}
+		return c
+	}
+	return 0
+}
+
+fun quakePutString(string ArrayPointer<UInt8>) Int32 {
+	var i Int32 = 0
+	while string[i] != 0 {
+		if quakePutChar(string[i]) == 0 {
+			return 0
+		}
+		i++
+	}
+	return 1
+}
+
+// TODO batch whole lines or store separate chars as strings to avoid `+=char`
+fun quakePutStringUnicode(string ConstArrayPointer<ClangWideChar>) Int32 {
+	var i Int32 = 0
+	while string[i] != 0 as! ClangWideChar {
+		if quakePutChar(string[i] as! UInt8) == 0 { // TODO
+			return 0
+		}
+		i++
+	}
+	return 1
+}
+
+fun quakePrintHex(n UInt64) {
+	quakePutStringUnicode("0x".utf16())
+
+	var n = n
+	var buf ArrayByValue<UInt8, 16> = [0]
+	var bp = ((buf as! UInt64) + 16) as! ArrayPointer<UInt8>
+
+	for i in 16 {
+		buf[i] = '0'.charCodeAt(0)
+	}
+
+	do {
+		bp--
+		var mod UInt8 = (n % 16) as! UInt8
+		if mod < 10 {
+			bp[0] = '0'.charCodeAt(0) + mod
+		} else {
+			bp[0] = 'A'.charCodeAt(0) - 10 + mod
+		}
+		n /= 16
+	} while (n != 0)
+
+	for i in 16 {
+		// TODO Hexa: this array access is obviously unsafe,
+		// and should be marked like this (with effect and search-by-effect?)
+		quakePutChar(buf[i] as! UInt8)
+	}
+}
+
+// TODO why not just accept String as a first argument?
+// TODO ensure unicode
+@nativeVariadic
+fun quakePrintf(c ConstArrayPointer<ClangWideChar>, ...args) {
+	va_start(c)
+
+	// TODO better idea?
+	requestAnimationFrame()
+
+	let c = c as! ArrayPointer<UInt16>
+	var i = 0
+
+	while c[i] != 0 {
+		if c[i] != 37 { // `%`
+			quakePutChar(c[i] & 0xFFu8)
+			i++
+			continue
+		}
+
+		i++
+
+		if c[i] == 0 {
+			break
+		}
+
+		switch c[i] {
+			case 115: { // ASCII of UTF-8 `s`
+					let string = va_arg_uint64() as! ArrayPointer<UInt8>
+					if string != null {
+						// TODO probeForReadOkay((uint64_t)string, 1)
+						quakePutString(string)
+					} else {
+						quakePrintf("<STRING IS NULL>".utf16())
+					}
+				}
+			case 83: { // ASCII of UTF-16 `S`
+					var string = va_arg_uint64() as! ArrayPointer<UInt16>
+					var i UInt32 = 0u32
+					if string != null {
+						// TODO probeForReadOkay((uint64_t)string, 2)
+						while string[i] != 0 {
+							quakePutChar(string[i] & 0xFFu8)
+							i++
+						}
+					} else {
+						quakePrintf("<STRING IS NULL>".utf16())
+					}
+				}
+			case 99: // `c`
+				quakePutChar(va_arg_int32() as! UInt8)
+			case 100: { // `d`
+					var value = va_arg_int32()
+					var buffer ArrayByValue<UInt8, 16> = [0]
+					for i in 16 {
+						buffer[i] = 0
+					}
+					comItoA(value, buffer.ref)
+					var c ArrayPointer<UInt8> = buffer.ref
+					var i = 0
+					while c[i] != 0 {
+						quakePutChar(c[i])
+						i++
+					}
+				}
+			case 117: { // `u`
+					var value UInt32 = va_arg_uint32()
+					var buffer ArrayByValue<UInt8, 16> = [0]
+					for i in 16 {
+						buffer[i] = 0
+					}
+					comItoA(value, buffer.ref)
+					var c ArrayPointer<UInt8> = buffer.ref
+					var i = 0
+					while c[i] != 0 {
+						quakePutChar(c[i])
+						i++
+					}
+				}
+			case 56: { // `8`
+					var value UInt64 = va_arg_uint64()
+					quakePrintHex(value)
+				}
+		}
+		i++
+	}
+}

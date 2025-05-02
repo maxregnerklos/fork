@@ -1,0 +1,736 @@
+// The Tofita Engine
+// Copyright (C) 2022-2025 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Loads EXE and DLL files
+
+// TODO ntdll should have tofitaStub(){} for unresolved dll imports -> log them
+// TODO ^ should actually show a message box and abort in future
+
+// TODO use std offset
+fun offsetPointer(data UInt64, offset UInt64) ArrayPointer<UInt8> {
+	return (data + offset) as! ArrayPointer<UInt8>
+}
+
+// TODO why not IMAGE_DATA_DIRECTORY
+@struct
+class ImageDataDirectory {
+	var virtualAddress UInt32
+	var size UInt32
+}
+
+@struct
+class PeInterim {
+	/// Base address after relocation
+	var base UInt64 // TODO UserPointer?
+	/// `_DllMainCRTStartup`
+	var entry UInt64
+	var imageDataDirectory ArrayPointer<ByValue<ImageDataDirectory>>
+	var sizeOfStackReserve UInt64
+	var is64bit Bool
+	new () { }
+}
+
+@struct
+class ExeInterim {
+	var pei PeInterim
+	var stackVirtual UInt64
+	new () { }
+}
+
+@struct
+class PeExportLinkedList {
+	var name ConstArrayPointer<UInt8>
+	var ptr UInt64
+	var next PeExportLinkedList
+	var hash UInt8
+}
+
+@struct
+class Executable {
+	var nextBase UInt64
+	var pml4 ArrayPointer<ByValue<PageEntry>>
+	new () { }
+}
+
+// TODO
+/// Optimal use as by-value to avoid allocation
+/// Works only with a user space memory
+// TODO document this ALL UPPER CASE convention for generics (no scalable?)
+@struct
+class SehReaderConcept<STRUCT> {
+	let ref ByValue<STRUCT>
+	new (address UInt64) {
+		// Always zero-fill cause its stack allocated
+		// TODO Hexa: always zero-fill `= {0}` stack allocated in code gen until `@noZeroing`
+		memset(ref.ref as! ArrayPointer<UInt8>, 0, sizeOf<STRUCT>()) // Zeroing
+
+		// TODO ensure this does not overflow and bounds are correct
+		if (address + sizeOf<STRUCT>()) >= upper or not probeForReadOkay(address, sizeOf<STRUCT>()) {
+			// Cancel reading when its clearly tries to read engine memory
+			serialPrintf("[sehReader] trying to read engine or bad memory %8\n", address)
+		} else {
+			// TODO use SEH-version of memory copy function
+			tmemcpy(ref.ref as! ArrayPointer<UInt8>, address as! ConstArrayPointer<UInt8>, sizeOf<STRUCT>())
+		}
+	}
+}
+
+// TODO 16-bit ones should go via emulator instead of entry point
+// like `if x16 { emu16(entry) } else entry()`
+fun is64Exe(asset RamDiskAsset) {
+	let ptr = asset.data as! ArrayPointer<UInt8>
+	// TODO 32-bit 0x3C and must be within asset bounds -> read as pointer to a number
+	let peHeader = ((ptr as! UInt64) + ptr[0x3C] + ptr[0x3C + 1] * 256) as! PeHeader
+	let peOptionalHeader = ((peHeader as! UInt64) + sizeOf<PeHeader>()) as! Pe64OptionalHeader
+	return peOptionalHeader.magic == 0x020B
+}
+
+// TODO AlignValueUpTests by Joachim Bauch
+// rsrc
+// Search for function names should be case sensitive
+// TODO access all memory safely via Buffer or something
+// TODO improve to not have that SIZE part
+// TODO <HEADER PeOptionalHeader> limit
+// type LIMIT is UInt64 or UInt32 /*concept limit*/
+// class PeOptionalHeader<LIMIT> {}
+// @require(T is UInt64 or UInt32) type LIMIT<T> = _
+// class PeOptionalHeader<LIMIT UInt64 or UInt32> {}
+// @require(SIZE is UInt64 or UInt32) <- same for optional fields
+// @optionalValidate(SIZE is UInt64, flag: 'is64'); @enableIf('is64') fun
+class ExeLoader<SIZE, HEADER> {
+	new () { }
+
+	// TODO security ideas
+	fun setWorkingRange(base UInt64, lengthInBytes UInt64) Void {
+		// now all operations go bounds checked *and* via SEH
+		// (after header and sections copy)
+		// ! most of wok like relocation *must* happen at user space
+	}
+
+	// TODO probe for read/write
+	// TODO error if not found
+	// TODO more PATH support
+	fun loadDll(name String, root PeExportLinkedList, exec Executable) PeInterim {
+		if Theme.verbose {
+			quakePrintf("[loadDll] loading {%S}\n".utf16(), name.utf16())
+		}
+
+		// TODO simple size ofs should be evaluated at normalizer to exclude ifs
+		// TODO switch HEADER { case type PeOptionalHeader<UInt32> }
+		// TODO `if let header = HEADER as PeOptionalHeader<UInt32> { header.ok }`
+		let is64bit = sizeOf<SIZE>() == 8
+		let env = is64bit? "C:\\Windows\\System32\\" : "C:\\Windows\\SysWOW64\\"
+		let fullPath = env + @hide name // TODO dedup `//` and normalize `/` to `\`
+		// TODO Note: `@hide name` should disallow erroneus usage of `name` instead of `fullPath`
+
+		/*if not is64bit {
+			let name = "C:\\Windows\\SysWOW64\\" + name
+			return loadPe(name, root, exec)
+		}
+		let name = "C:\\Windows\\System32\\" + name
+		return loadPe(name, root, exec)*/
+		return loadPe(fullPath, root, exec)
+	}
+
+	fun loadPe(name String, root PeExportLinkedList, exec Executable) {
+		let asset RamDiskAsset = getRamDiskAsset(name)
+		serialPrintf("[loadDLL] loaded dll asset '%S' %d bytes at %d\n", name.utf16(), asset.size, asset.data)
+		return loadPeAsset(asset, root, exec)
+	}
+
+	fun loadPeAsset(asset RamDiskAsset, root PeExportLinkedList, exec Executable) {
+		var peHeader = ((ptr as! UInt64) + ptr[0x3C] + ptr[0x3C + 1] * 256) as! PeHeader
+		let ptr = asset.data as! ArrayPointer<UInt8>
+		// TODO 0x3C is 32-bit
+		serialPrintf("[loadDLL] PE header signature 'PE' == '%s'\n", peHeader)
+		var peOptionalHeader = ((peHeader as! UInt64) + sizeOf<PeHeader>()) as! HEADER
+		serialPrintf("[loadDLL] PE32(+) optional header signature 0x020B == %d == %d\n", peOptionalHeader.magic,
+			0x020B)
+		// TODO require all .dlls ARCH be the same or show loader error
+		serialPrintf("[loadDLL] PE32(+) size of image == %d\n", peOptionalHeader.sizeOfImage)
+
+		let pages = down_bytes_to_pages(peOptionalHeader.sizeOfImage) + 1u32
+		let physical = PhysicalAllocator.allocatePages(pages)
+
+		if exec.nextBase == 0 {
+			// TODO round to pages? or 64kb? same for sections
+			exec.nextBase = peOptionalHeader.imageBase
+		}
+
+		mapMemory(
+			exec.pml4,
+			exec.nextBase,
+			physical - wholePhysicalStart,
+			pages,
+			accessibleByUser: true
+		)
+
+		let buffer UInt64 = exec.nextBase
+		serialPrintf("[loadDLL] PE mapped at %8\n", buffer)
+		memset(buffer as! ArrayPointer<UInt8>, 0, peOptionalHeader.sizeOfImage) // Zeroing
+
+		exec.nextBase = exec.nextBase + pages * pageSize
+		// TODO Hexa: better safe cast to signed (.toSignedTrimmed/Clamped/Truncated() and toSignedBitExact())
+		// ^ support in C-to-Hexa too
+		let delta Int64 = (buffer as! Int64) - (peOptionalHeader.imageBase as! Int64)
+
+		// Copy sections
+		var imageSectionHeader =
+			((peOptionalHeader as! UInt64) + peHeader.sizeOfOptionalHeader) as! ArrayPointer<ByValue<ImageSectionHeader>>
+
+		// Copy PE headers
+		{
+			let amount UInt64 = peOptionalHeader.sizeOfHeaders
+			let destination = buffer as! ArrayPointer<UInt8>
+			serialPrintf("[loadDLL] PE sizeOfHeaders is %d\n", amount)
+			// TODO .dlls too
+			// if delta == 0
+			{
+				// TODO all mem copy usages must be SEH ones
+				tmemcpy(destination, ptr, amount)
+			}
+			// TODO fail if too much
+			serialPrintf("[loadDLL] PE done copying sizeOfHeaders\n")
+		}
+
+		// Copy sections
+		for i in peHeader.numberOfSections {
+			serialPrintf("[loadDLL] Copy section [%d] named '%s' of size %d at %u\n", i,
+				imageSectionHeader[i].ref.name.ref,
+				imageSectionHeader[i].ref.sizeOfRawData,
+				imageSectionHeader[i].ref.virtualAddress)
+			var where UInt64 = (buffer as! UInt64) + imageSectionHeader[i].ref.virtualAddress
+
+			tmemcpy(where as! ArrayPointer<UInt8>,
+				((asset.data as! UInt64) + (imageSectionHeader[i].ref.pointerToRawData as! UInt64)) as! ConstArrayPointer<UInt8>,
+				imageSectionHeader[i].ref.sizeOfRawData)
+		}
+
+		// TODO `const ImageDataDirectory*` just `let` all the fields in class declaration?
+		let imageDataDirectory =
+			((peOptionalHeader as! UInt64) + sizeOf<HEADER>()) as! ArrayPointer<ByValue<ImageDataDirectory>>
+
+		// Relocate EXE or DLL to a new base
+		// TODO should return signed or something? used ptr_diff_t
+		// NOTE this is a user-mode address, so pointer delta is ok (TODO really?)
+		let delta Int64 = (buffer as! Int64) - (peOptionalHeader.imageBase as! Int64)
+		if delta != 0 {
+			var codeBase ArrayPointer<UInt8> = buffer as! ArrayPointer<UInt8>
+
+			var directory =
+				// TODO indexing by enum like `IMAGE_DIRECTORY_ENTRY_BASERELOC`
+				imageDataDirectory[image_directory_entry_basereloc].ref as! IMAGE_DATA_DIRECTORY
+
+			if directory.size == 0 {
+				// return (delta == 0)
+			}
+
+			var relocation = (codeBase + directory.virtualAddress) as! IMAGE_BASE_RELOCATION
+			while relocation.virtualAddress > 0 {
+				var dest UInt64 = (codeBase as! UInt64) + (relocation.virtualAddress as! UInt64)
+				var relInfo = offsetPointer(relocation as! UInt64, image_sizeof_base_relocation) as! ArrayPointer<UInt16>
+
+				for i in (relocation.sizeOfBlock - image_sizeof_base_relocation) / 2 {
+					// The upper 4 bits define the type of relocation
+					let type Int32 = relInfo[0] >> 12
+					// The lower 12 bits define the offset
+					let offset UInt64 = relInfo[0] & 0xfff
+
+					switch type as! ImageRelocationType {
+						case IMAGE_REL_BASED_ABSOLUTE:
+							// Skip relocation
+							// TODO `break` will not work here?
+
+							// TODO rename to HIGH_LOW
+						case IMAGE_REL_BASED_HIGHLOW:
+							// Change complete 32 bit address
+							{
+								let patchAddrHL ArrayPointer<UInt32> = (dest + offset) as! ArrayPointer<UInt32>
+								patchAddrHL[0] += delta as! UInt32
+							}
+							// break
+
+							// TODO `#ifdef _WIN64`
+						case IMAGE_REL_BASED_DIR64: {
+								// TODO should be no-op on 32 bit
+								let patchAddr64 = (dest + offset) as! ArrayPointer<Int64>
+								patchAddr64[0] += delta as! Int64
+							}
+							// break
+							// TODO `#endif`
+
+						case _:
+							// TODO loader should fail
+							serialPrintf("[loadDLL] Unknown relocation: %d\n", type)
+							// break
+					}
+
+					// Next step
+					// TODO must error `relInfo++`
+					relInfo++
+				}
+
+				// Advance to next relocation block
+				relocation = offsetPointer(relocation as! UInt64, relocation.sizeOfBlock) as! IMAGE_BASE_RELOCATION
+			}
+		}
+
+		serialPrintf("[loadDLL] Done relocations\n")
+
+		// Exports
+
+		var tail PeExportLinkedList = root
+		while tail.next != null {
+			tail = tail.next
+		}
+
+		// TODO code gen over u8 must be `i` of u8 too
+		// TODO is it always 15? or its specified in the header?
+		for i in 15u8 {
+			if i as! ImageDirectoryType == ImageDirectoryType.IMAGE_DIRECTORY_ENTRY_EXPORT {
+				var codeBase UInt64 = (buffer as! UInt64)
+				let directory = imageDataDirectory[i].ref as! ImageDataDirectory
+
+				var exports = ((buffer as! UInt64) + (directory.virtualAddress as! UInt64)) as! IMAGE_EXPORT_DIRECTORY
+
+				var nameRef ArrayPointer<UInt32> = (codeBase + (exports.addressOfNames as! UInt64)) as! ArrayPointer<UInt32>
+				var ordinal ArrayPointer<UInt16> = (codeBase + (exports.addressOfNameOrdinals as! UInt64)) as! ArrayPointer<UInt16>
+				var entry UInt32 = 0
+
+				for i in exports.numberOfNames {
+					let name = (codeBase + (nameRef[0] as! UInt64)) as! ConstArrayPointer<UInt8>
+					let idx UInt64 = ordinal[0]
+
+					let addr = codeBase + (exports.addressOfFunctions as! UInt64) + (idx * 4u64)
+					let ptr = addr as! ArrayPointer<UInt32>
+
+					let func = (codeBase + ptr[0]) as! UInt64
+
+					let list =
+						PhysicalAllocator.allocateBytes(sizeOf<PeExportLinkedList>()) as! PeExportLinkedList
+					list.next = null
+					list.name = name
+					list.ptr = func
+
+					tail.next = list
+					tail = tail.next
+
+					// Next step
+					nameRef++
+					ordinal++
+					entry++
+				}
+			}
+		}
+
+		let pei = new PeInterim()
+
+		pei.base = buffer
+		pei.entry = (buffer as! UInt64) + (peOptionalHeader.addressOfEntryPoint as! UInt64)
+		pei.imageDataDirectory = imageDataDirectory
+		pei.sizeOfStackReserve = peOptionalHeader.sizeOfStackReserve
+		pei.is64bit = sizeOf<SIZE>() == 8
+
+		return pei
+	}
+
+	// TODO for system dlls (ntdll, user32, etc) search EVERY dll for the name, cause they
+	// may be moved between versions.
+	// Search only selected .dll only within the user provided dlls
+	fun getProcAddress(name ConstArrayPointer<UInt8>, root PeExportLinkedList) PeExportLinkedList? {
+		var list PeExportLinkedList = root
+		// TODO make it intrusive list
+		// TODO compute crc for faster .dll import names lookup
+		while list.next != null {
+			// Step upfront, to ignore empty root
+			list = list.next
+
+			var i UInt16 = 0
+			while true {
+				if (list.name[i] == name[i]) and (name[i] as! Int == 0) {
+					serialPrintf("[getProcAddress] import {%s} resolved to {%s}\n", name, list.name)
+					return list
+					break
+				}
+
+				if list.name[i] == name[i] {
+					i++
+					continue
+				}
+				break
+			}
+		}
+
+		serialPrintf("[getProcAddress] import {%s} unresolved\n", name)
+		return null
+	}
+
+	// TODO `template<typename SIZE>`
+	fun resolveDllImports(pei PeInterim, root PeExportLinkedList) {
+		var buffer UInt64 = pei.base
+		var imageDataDirectory = pei.imageDataDirectory
+		var unresolved = 0
+
+		// Imports
+		{
+			let at =
+				((buffer as! UInt64) + (imageDataDirectory[image_directory_entry_import].ref.virtualAddress as! UInt64)) as! ArrayPointer<UInt8>
+			var iid = at as! IMAGE_IMPORT_DESCRIPTOR
+
+			// DLL
+			// TODO must error `while iid.originalFirstThunk != null {` compares Int and null
+			while iid.originalFirstThunk != 0 {
+				var szName = ((buffer as! UInt64) + (iid.name as! UInt64)) as! ArrayPointer<UInt8>
+				var pThunkOrg = ((buffer as! UInt64) + (iid.originalFirstThunk as! UInt64)) as! IMAGE_THUNK_DATA<SIZE>
+				// TODO `(SIZE *)`
+				var funcRef = ((buffer as! UInt64) + (iid.firstThunk as! UInt64)) as! ArrayPointer<SIZE>
+
+				// TODO bad code gen for uint32_t$null `while pThunkOrg.addressOfData != null {`
+				while pThunkOrg.addressOfData != 0 {
+					var ord UInt32 = 666
+					var func SIZE = 0
+
+					if (pThunkOrg.ordinal & 0x80000000u32) != 0 {
+						ord = pThunkOrg.ordinal & 0xffff
+						serialPrintf("[resolveDllImports] import {%s}.@%d - at address: {%d} <------------ NOT "
+							+
+							"IMPLEMENTED YET!\n",
+							szName, ord, pThunkOrg.func
+						)
+					} else {
+						let pIBN = (
+							(buffer as! UInt64) +
+							(
+								(pThunkOrg.addressOfData as! UInt64) &
+								0xffffffffu64
+							) as! UInt64
+						) as! IMAGE_IMPORT_BY_NAME
+
+						ord = pIBN.hint
+						var szImportName ConstArrayPointer<UInt8> = pIBN.name as! ConstArrayPointer<UInt8>
+						serialPrintf("[resolveDllImports] import {%s}.{%s}@%d - at address: {%d}\n",
+							szName,
+							szImportName, ord, pThunkOrg.func)
+
+						// Resolve import
+						// func = null // TODO This should error
+						func = 0
+
+						let proc PeExportLinkedList? = getProcAddress(szImportName, root)
+
+						if let proc = proc {
+							func = proc.ptr as! SIZE
+						} else {
+							// Set stub to avoid simple crash
+							// TODO `tofitaStdStub`
+							// TODO separate placeholders for std call etc
+							// TODO cache the bytes!
+							// TODO resolve upfront and cache !!! for faster exe load
+							if let placeholder = getProcAddress("tofitaFastStub".utf8copy().bytes as! ConstArrayPointer<UInt8>, root) {
+								func = placeholder.ptr as! SIZE
+								if Theme.verbose and unresolved < 2 {
+									// TODO Hexa: meta.funName instead of "resolveDllImports" text
+									quakePrintf("[resolveDllImports] using placeholder for %s of %s\n".utf16(), szImportName, szName)
+								}
+								if Theme.verbose and unresolved == 2 {
+									quakePrintf("[resolveDllImports] similar messages will be hidden\n".utf16())
+								}
+							} else {
+								serialPrintf("[resolveDllImports] placeholder for {%s} is unresolved\n", szImportName)
+								if Theme.verbose and unresolved < 2 {
+									quakePrintf("[resolveDllImports] placeholder for {%s} is unresolved\n".utf16(), szImportName)
+								}
+								if Theme.verbose and unresolved == 2 {
+									quakePrintf("[resolveDllImports] similar messages will be hidden\n".utf16())
+								}
+							}
+
+							unresolved++
+						}
+					}
+
+					funcRef[0] = func as! SIZE
+					pThunkOrg++
+					// TODO ^ well `++` should not be allowed for this
+					let size = sizeOf<SIZE>()
+					funcRef = (funcRef as! UInt64 + size) as! ArrayPointer<SIZE>
+				}
+
+				iid++
+			}
+		}
+	}
+
+	fun loadExe(asset RamDiskAsset, root PeExportLinkedList, exec Executable) {
+		let ei ExeInterim = new ExeInterim()
+
+		ei.pei = loadPeAsset(asset, root, exec)
+
+		// Allocate stack
+		{
+			let pages = down_bytes_to_pages(ei.pei.sizeOfStackReserve) + 1u32
+			// TODO rename to `stackPhysical`
+			// TODO rename to `PhysicalAllocator.allocateDirtyPages` for clarity
+			let physical = PhysicalAllocator.allocatePages(pages)
+
+			// TODO guard page? also stack overcommit
+			let buffer UInt64 = exec.nextBase
+
+			mapMemory(
+				exec.pml4,
+				exec.nextBase,
+				physical - wholePhysicalStart,
+				pages,
+				accessibleByUser: true
+			)
+
+			// TODO yeah use PreZeroed-functions of `PhysicalAllocator`
+			memset(buffer as! ArrayPointer<UInt8>, 0, ei.pei.sizeOfStackReserve) // Zeroing
+
+			exec.nextBase = exec.nextBase + pages * pageSize
+
+			ei.stackVirtual = buffer
+		}
+
+		// Allocate PEB
+		{
+			let pages = 1u32
+			let physical = PhysicalAllocator.allocateOnePagePreZeroed()
+			// From GDT aka GS:[0x00] TODO to tibDestination variable
+			let where = 0x00000000FFFAE000u64
+			// TODO TEB always 000007FF'FFFAE000 on 64-bit?
+
+			// TODO map upfront, to make this page occupied for proper relocation
+			mapMemory(exec.pml4, where, physical - wholePhysicalStart, pages, accessibleByUser: true)
+
+			let is64bit = ei.pei.is64bit
+			if is64bit {
+				let tib = physical as! TIB64
+
+				// TODO other fields + proper offsets
+				tib.self = where
+				tib.exceptionList = where
+				tib.stackBase = where
+				tib.stackLimit = where
+				tib.subSystemTib = where
+				tib.arbitraryUserPointer = where
+				tib.environmentPointer = where
+
+				// PEB - Process Environment Block
+				let physicalPEB = PhysicalAllocator.allocateOnePagePreZeroed()
+				mapMemory(exec.pml4, where + 4096u64, physicalPEB - wholePhysicalStart, 1, accessibleByUser: true)
+				let wherePEB = physical + 0x60u64
+				let wherePEBaddr = wherePEB as! ArrayPointer<UInt64>
+				wherePEBaddr[0] = where + 4096u64
+
+				let processParameters = (physicalPEB + 0x20u64) as! ArrayPointer<UInt64>
+				processParameters[0] = where + 4096u64 + 256u64
+			} else {
+				let tib = physical as! TIB32
+
+				// TODO remove PEB32 from Tofita entirely and fill it all from user space
+				// ^ it must be within 2 GB range
+				// On 32-bit systems, the PEB is accessible via the Thread Environment Block (TEB) at FS:[0x30].
+				// Alternatively, APIs like `NtQueryInformationThread` can retrieve the PEB address.
+				tib.self = where as! UInt32
+				tib.exceptionList = where as! UInt32
+				tib.stackBase = where as! UInt32
+				tib.stackLimit = where as! UInt32
+				tib.subSystemTib = where as! UInt32
+				tib.arbitraryUserPointer = where as! UInt32
+			}
+		}
+
+		// Map fonts
+		{
+			// TODO map with tail/head aligned at 4k (or even 64k)
+		}
+
+		return ei
+	}
+
+	fun resolveExeImports(ei ExeInterim, root PeExportLinkedList) {
+		resolveDllImports(ei.pei, root)
+	}
+
+	// TODO `template<typename SIZE>` per function
+	// TODO make `entry` a generic too
+	fun addDllEntry(physical UInt64, entry UInt64, startup ProcessStartupInformation) {
+		let max SIZE = 511 // TODO any other limits?
+		// TODO ^ 32-bit limit is x2
+		// TODO in NT DLL count[0] is expected to be u32
+		let dllEntries = physical as! ArrayPointer<SIZE>
+
+		// TODO `if count[0] >= 511 {`
+		// let amount = count[0] as! SIZE
+		// if amount >= (511 as! SIZE) {
+		if startup.dllCount >= 511 {
+			// TODO error > GUI alert DLL entry not found
+			return
+		}
+
+		dllEntries[startup.dllCount] = entry
+		startup.dllCount++
+	}
+
+	// DLL entry points aka `DllMain`
+	// TODO make it linked list, if it's not enough?
+	let dllEntries = PhysicalAllocator.allocateOnePagePreZeroed()
+
+	// Size is ensured by `@sizeOfLessOrEqual(4096)`
+	let startup = PhysicalAllocator.allocateOnePagePreZeroed() as! ProcessStartupInformation
+
+	fun loadRelatedDLLsAndMapIntoProcess(app ExeInterim, root PeExportLinkedList, exec Executable, process TofitaProcess) {
+		// TODO parse DLLs in multiple threads
+		let ntdll = loadDll("ntdll.dll", root, exec) // TODO proper path!!!
+		let kernel32 = loadDll("kernel32.dll", root, exec)
+		let gdi32 = loadDll("gdi32.dll", root, exec)
+		let user32 = loadDll("user32.dll", root, exec)
+		let advapi32 = loadDll("advapi32.dll", root, exec)
+		let comctl32 = loadDll("comctl32.dll", root, exec)
+		let shell32 = loadDll("shell32.dll", root, exec)
+		let msvcrt = loadDll("msvcrt.dll", root, exec)
+		// TODO read dll files from the list of imports of .exe and .dlls, hardcode only ntdll
+		// ^ ensure paths have no / and \
+		// ^ case insensitive
+		// TODO reuse loaded dlls in memory
+		// TODO load every DLL in separate thread
+
+		let is64bit = app.pei.is64bit
+
+		// TODO resolve in multiple threads (this is readonly operation over list of imports, but not for sections)
+		resolveDllImports(ntdll, root)
+		resolveDllImports(kernel32, root)
+		resolveDllImports(msvcrt, root)
+		resolveDllImports(gdi32, root)
+		resolveDllImports(user32, root)
+		resolveDllImports(advapi32, root)
+		resolveDllImports(comctl32, root)
+		resolveDllImports(shell32, root)
+		resolveExeImports(app, root)
+
+		addDllEntry(dllEntries, kernel32.entry, startup)
+		addDllEntry(dllEntries, msvcrt.entry, startup)
+		addDllEntry(dllEntries, gdi32.entry, startup)
+		addDllEntry(dllEntries, user32.entry, startup)
+		addDllEntry(dllEntries, advapi32.entry, startup)
+		addDllEntry(dllEntries, comctl32.entry, startup)
+		addDllEntry(dllEntries, shell32.entry, startup)
+
+		process.is64bit = is64bit
+
+		if is64bit {
+			process.frame.cs = Selector.USER_CODE64_SEL_USER_MODE
+		} else {
+			// Thirty two bits
+			process.frame.cs = Selector.USER_CODE32_SEL_USER_MODE
+			// TODO IMAGE_FILE_LARGE_ADDRESS_AWARE
+			// TODO IMAGE_FILE_LARGE_ADDRESS_AWARE with compatibility mode (3 GB, 128 TB)
+			process.limits = AddressAwareness.Bit32limit2GB
+			// TODO pager should respect those limits
+		}
+
+		// TODO this may fail/except, handle errors
+		// TODO refactor to pml4.findUserspaceMemory method
+		let whereEntries = findUserspaceMemory(
+			process.pml4,
+			0,
+			1,
+			process.limits
+		)
+
+		// TODO this may fail/except, handle errors (de-allocate all memory)
+		mapMemory(
+			process.pml4,
+			whereEntries,
+			dllEntries - wholePhysicalStart,
+			1,
+			accessibleByUser: true
+		)
+
+		startup.dllEntries = whereEntries
+		startup.entry = app.pei.entry
+		startup.pid = process.pid
+
+		let whereStartup = findUserspaceMemory(
+			process.pml4,
+			0,
+			1,
+			process.limits
+		)
+
+		mapMemory(
+			process.pml4,
+			whereStartup,
+			(startup as! UInt64) - wholePhysicalStart,
+			1,
+			accessibleByUser: true
+		)
+
+		/* TODO ?? {
+			unMap()
+			return // <- here guard returns from a block, not immediately `?? return`
+		} Hexa */
+		process.frame.ip = ntdll.entry // Contains crt0
+		process.frame.sp = app.stackVirtual
+		process.frame.rcxArg0 = whereStartup // First argument
+		// process.frame.rcxArg0 = app.pei.entry // First argument
+		// process.frame.r8 = whereEntries // Third argument
+		// TODO merge all to one argument (single structure)
+		// TODO unMap zero page to cause NPE
+	}
+}
+
+fun loadExeIntoProcess(file String, process TofitaProcess) {
+	if Theme.verbose {
+		quakePrintf("[loadExeIntoProcess] loading {%S}\n".utf16(), file.utf16())
+	}
+	{
+		let root =
+			PhysicalAllocator.allocateBytes(sizeOf<PeExportLinkedList>()) as! PeExportLinkedList
+		root.next = null
+		root.name = null
+		root.ptr = 0
+
+		let exec Executable = new Executable()
+		exec.nextBase = 0
+		exec.pml4 = process.pml4
+
+		let asset = getRamDiskAsset(file)
+
+		// TODO fix in code gen `if ExeLoader.is64(asset) {` for `static fun` of generic class
+		// TODO `if ExeLoader<UInt64, Pe64OptionalHeader>.is64(asset) {`
+		let is64 = is64Exe(asset)
+		if Theme.verbose {
+			if is64 {
+				quakePrintf("[loadExeIntoProcess] process is 64 bit\n".utf16())
+			} else {
+				quakePrintf("[loadExeIntoProcess] process is 32 bit\n".utf16())
+			}
+		}
+
+		if is64 {
+			let loader = new ExeLoader<UInt64, Pe64OptionalHeader>()
+			// TODO Hexa: use interface (non-runtime?) here to avoid code dup
+			// or just move this code into function
+			let app = loader.loadExe(asset, root, exec)
+			loader.loadRelatedDLLsAndMapIntoProcess(app, root, exec, process)
+		} else {
+			let loader = new ExeLoader<UInt32, Pe32OptionalHeader>()
+			let app = loader.loadExe(asset, root, exec)
+			loader.loadRelatedDLLsAndMapIntoProcess(app, root, exec, process)
+		}
+	}
+}

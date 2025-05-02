@@ -1,0 +1,34 @@
+// The Tofita Engine
+// Copyright (C) 2023 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Maxregneros Modern Theme
+class Theme {
+	var background: Color = Color(240, 240, 245)
+	var window: Color = Color(255, 255, 255)
+	var accent: Color = Color(0, 120, 255)
+	var border: Color = Color(200, 200, 210)
+	var font: Font = Font("San Francisco", 18, dpi_scale())
+
+	static fun current() -> Theme {
+		return Theme()
+	}
+}
+
+fun dpi_scale() -> Float {
+	return GPU.getDPIScale()
+}
+
+var justBlur = false
+var wallpaperSource Bitmap32 = null

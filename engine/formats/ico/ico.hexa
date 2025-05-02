@@ -1,0 +1,157 @@
+// The Tofita Engine
+// Copyright (C) 2022-2025 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// TODO rename to `toUInt32`
+fun toInt32(a UInt8, b UInt8, c UInt8, d UInt8) UInt32 {
+	return a + b * 256 + c * 0xFFFF + d * 0xFFFFFFu32
+}
+
+fun loadIcon(buffer ConstArrayPointer<UInt8>, width Int) Bitmap32 {
+	// Reserved. Must always be 0.
+	if buffer[0] != 0 {
+		return null
+	}
+	// Specifies image type: 1 for icon (.ICO) image, 2 for cursor (.CUR) image.
+	// Other values are invalid.
+	if buffer[2] != 1 {
+		return null
+	}
+	// Specifies number of images in the file.
+	let count Int = buffer[4] + buffer[5] * 0xFF
+	serialPrintf("%d images in a icon\n", count)
+	if count == 0 {
+		return null
+	}
+
+	// Search for the largest one with best quality
+	var best = 6u32 // Offset
+	var bestId = 0
+	var offset = 6u32
+	var width = width
+	if width == 256 {
+		width = 0 // Fix search
+	}
+	for i in count {
+		// Specifies image width in pixels. Can be any number between 0 and 255. Value 0 means image width is 256 pixels.
+		// Specifies image height in pixels. Can be any number between 0 and 255. Value 0 means image height is 256 pixels.
+		// Specifies number of colors in the color palette. Should be 0 if the image does not use a color palette.
+		serialPrintf("%d image is %dx%d, palette = %d\n", i, buffer[offset], buffer[offset + 1], buffer[offset + 2])
+		// if buffer[offset] + buffer[offset + 1] >= buffer[best] + buffer[best + 1] {
+		if buffer[offset] == width {
+			best = offset
+			bestId = i
+		}
+		offset += 16
+		// Reserved. Should be 0.
+
+		// In ICO format: Specifies color planes. Should be 0 or 1.[Notes 3]
+		// In CUR format: Specifies the horizontal coordinates of the hotspot in number of pixels from the left.
+
+		// In ICO format: Specifies bits per pixel. [Notes 4]
+		// In CUR format: Specifies the vertical coordinates of the hotspot in number of pixels from the top.
+
+		// Specifies the size of the image's data in bytes
+		// let size = toInt32(buffer[offset + 8], buffer[offset + 9], buffer[offset + 10], buffer[offset + 11])
+		// console.log("%d size\n", size)
+		// Specifies the offset of BMP or PNG data from the beginning of the ICO/CUR file
+	}
+
+	serialPrintf("The best image is %dx%d, palette = %d, id %d\n", buffer[best], buffer[best + 1], buffer[best + 2], bestId)
+
+	/* TODO
+	let bmp {width Int, height Int, planes Int, bits Int, pixels Buffer} = {
+		// Specifies image width in pixels. Can be any number between 0 and 255. Value 0 means image width is 256 pixels.
+		width: buffer[best],
+		// Specifies image height in pixels. Can be any number between 0 and 255. Value 0 means image height is 256 pixels.
+		height: buffer[best + 1],
+		// Specifies number of colors in the color palette. Should be 0 if the image does not use a color palette.
+		// Reserved. Should be 0.
+		// In CUR format: Specifies the horizontal coordinates of the hotspot in number of pixels from the left.
+		// In ICO format: Specifies color planes. Should be 0 or 1
+		planes: buffer[best + 4] + buffer[best + 5] * 0xFF,
+		// In CUR format: Specifies the vertical coordinates of the hotspot in number of pixels from the top.
+		// In ICO format: Specifies bits per pixel.
+		bits: buffer[best + 6] + buffer[best + 7] * 0xFF,
+		pixels: null
+	}
+	*/
+	// TODO Hexa: sublime comment
+
+	let planes = buffer[best + 4] + buffer[best + 5] * 0xFF
+	let bits = buffer[best + 6] + buffer[best + 7] * 0xFF
+	var width UInt16 = buffer[best]
+	var height UInt16 = buffer[best + 1]
+
+	// Specifies the size of the image's data in bytes
+	let imageSize = toInt32(buffer[best + 8], buffer[best + 9], buffer[best + 10], buffer[best + 11])
+	// Specifies the offset of BMP or PNG data from the beginning of the ICO/CUR file
+	offset = toInt32(buffer[best + 12], buffer[best + 13], buffer[best + 14], buffer[best + 15])
+
+	if width == 0 {
+		width = 256
+	}
+	if height == 0 {
+		height = 256
+	}
+	// TODO investigate this nuance
+	if height == width * 2 {
+		height = width
+	}
+
+	return loadIconPayload(buffer, width, height, imageSize, offset)
+}
+
+fun loadIconPayload(buffer ConstArrayPointer<UInt8>, width UInt16, height UInt16, imageSize UInt32, offset UInt32) {
+	let bmp Bitmap32 = allocateBitmap(width, height)
+
+	serialPrintf("The icon is %dx%d, %d bytes at %d\n", bmp.width, bmp.height, imageSize, offset)
+	// A PNG file starts with an 8-byte signature (refer to hex editor image on the right):
+	serialPrintf("Header at %d: %d %d %d %d\n", offset, buffer[offset], buffer[offset + 1], buffer[offset + 2], buffer[offset + 3])
+	// serialPrintf("Header text is:\n", String.fromCharCode(buffer[offset], buffer[offset + 1], buffer[offset + 2], buffer[offset + 3]))
+
+	// ?PNG
+	if
+		buffer[offset] == 0x89 and
+		buffer[offset + 1] == 0x50 and
+		buffer[offset + 2] == 0x4E and
+		buffer[offset + 3] == 0x47
+	{
+		serialPrintf('Decoding as PNG\n')
+		// TODO let buffer = (buffer.address)
+		let buffer = (buffer as! UInt64) + offset
+		return loadStbi32FromBuffer(buffer as! ArrayPointer<UInt8>, imageSize)
+	}
+
+	// serialPrintf("Header at: %d %d %d %d\n", buffer[best + 12], buffer[best + 13], buffer[best + 14], buffer[best + 15])
+	let fsize = bmp.width * bmp.height * 4
+	let start = offset + 20 + 16 + 4
+	// TODO bmp.pixels = buffer.slice(start, start + imageSize)
+	let pixels = ((buffer as! UInt64) + start) as! ArrayPointer<UInt8>
+
+	// serialPrintf("Icon bits per pixel %d == %d, color planes %d\n", bits, 8 * Math.round(imageSize / (bmp.width * bmp.height)), planes)
+	serialPrintf("Icon bytes %d == %d\n", bmp.width * bmp.height * 4, imageSize)
+
+	// Mirror vertical
+	for y in bmp.height {
+		for x in bmp.width {
+			bmp.pixels[y * width + x].ref.rgba.ref.r = pixels[((height - y - 1) * width + x) * 4 + 0]
+			bmp.pixels[y * width + x].ref.rgba.ref.g = pixels[((height - y - 1) * width + x) * 4 + 1]
+			bmp.pixels[y * width + x].ref.rgba.ref.b = pixels[((height - y - 1) * width + x) * 4 + 2]
+			bmp.pixels[y * width + x].ref.rgba.ref.a = pixels[((height - y - 1) * width + x) * 4 + 3]
+		}
+	}
+
+	return bmp
+}

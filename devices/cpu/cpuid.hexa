@@ -1,0 +1,117 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+@struct
+class CPUID {
+	// TODO implement value arrays init in constructor
+	var vendorID ArrayByValue<UInt8, 13> = [0]
+	var brandName ArrayByValue<UInt8, 48> = [0]
+	var data ArrayByValue<UInt32, 1> = [0]
+	var extras ArrayByValue<UInt32, 1> = [0]
+	var extendedECX ArrayByValue<UInt32, 1> = [0]
+	var extendedEDX ArrayByValue<UInt32, 1> = [0]
+	var nxBitSupported = false
+	new () { }
+}
+
+let cpuidExtendedLevels UInt32 = 0x80000000u32 // TODO valid values u/i8/16/32/64
+
+fun getCPUID() CPUID {
+	var result = new CPUID()
+	var stub ArrayByValue<UInt32, 1> = [0]
+	cpuid(
+		0,
+		0,
+		result.data.ref,
+		(result.vendorID.ref as! UInt64 + 0) as! ArrayPointer<UInt32>,
+		(result.vendorID.ref as! UInt64 + 8) as! ArrayPointer<UInt32>,
+		(result.vendorID.ref as! UInt64 + 4) as! ArrayPointer<UInt32>
+	)
+
+	cpuid(
+		cpuidExtendedLevels,
+		0,
+		result.extras.ref,
+		stub.ref,
+		stub.ref,
+		stub.ref
+	)
+
+	cpuid(
+		cpuidExtendedLevels + 1,
+		0,
+		stub.ref,
+		stub.ref,
+		result.extendedECX.ref,
+		result.extendedEDX.ref
+	)
+
+	// TODO Hexa: disallow mixing bit ops and logical (!=) ops!
+	// Like Infix(bit, Infix(logical, ...))
+	// result.nxBitSupported = 0 != result.extendedEDX[0] & 0b00000000000100000000000000000000u32
+	// TODO ^ also precedence bug or Infix bug: the result of this is Bool, not integer, must not be assignable
+	result.nxBitSupported = 0 != (result.extendedEDX[0] & 0b00000000000100000000000000000000u32)
+
+	if result.extras[0] >= cpuidExtendedLevels + 4 {
+		cpuid(
+			cpuidExtendedLevels + 2,
+			0,
+			// TODO trim?
+			(result.brandName.ref as! UInt64 + 0) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 4) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 8) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 12) as! ArrayPointer<UInt32>
+		)
+		cpuid(
+			cpuidExtendedLevels + 3,
+			0,
+			(result.brandName.ref as! UInt64 + 16) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 20) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 24) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 28) as! ArrayPointer<UInt32>
+		)
+		cpuid(
+			cpuidExtendedLevels + 4,
+			0,
+			(result.brandName.ref as! UInt64 + 32) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 36) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 40) as! ArrayPointer<UInt32>,
+			(result.brandName.ref as! UInt64 + 44) as! ArrayPointer<UInt32>
+		)
+	}
+
+	var i = 0
+	let r = '\r'.charCodeAt(0) as! UInt8
+	let n = '\n'.charCodeAt(0) as! UInt8
+
+	while i++ < 48 {
+		if result.brandName[i] == r {
+			result.brandName[i] = 0
+		} else if result.brandName[i] == n {
+			result.brandName[i] = 0
+		}
+	}
+
+	i = 0
+	while i++ < 13 {
+		if result.vendorID[i] == r {
+			result.vendorID[i] = 0
+		} else if result.vendorID[i] == n {
+			result.vendorID[i] = 0
+		}
+	}
+
+	return result
+}

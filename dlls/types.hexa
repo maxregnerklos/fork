@@ -1,0 +1,276 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// TODO better idea
+@struct
+class Handle {
+	// Ok
+}
+
+// TODO ifdef 64-bit
+// (HandleSize)handle & ~(HandleSize)0b11
+declare HandleSize = UInt64
+declare HInstance = Handle
+declare HIcon = Handle
+declare HBrush = Handle
+declare HCursor = Handle
+declare HLocal = Handle
+declare HGlobal = Handle
+declare HWnd = Handle
+declare HMenu = Handle
+declare HDc = Handle
+declare HFont = Handle
+declare HRsrc = Handle
+declare HMonitor = Handle
+declare HModule = Handle
+
+// TODO @byValue + @sizeOf(8/4)/@sizeOfPointer + value: size_t = safe converters
+@struct
+class LResult {
+	// Ok
+}
+
+// TODO LResult as enum?
+let error_success = 0 as! LResult
+let error_invalid_handle = 6 as! LResult
+let invalid_handle_value = (-1) as! Handle
+// TODO `let invalid_handle_value = -1 as! Handle` not `(-1)`
+
+enum Bool32: Int32 {
+	False = 0
+	// TODO ^ types check infer 0i32 etc same as int
+	True = 1
+	// TODO ^ `true` is any non-0 value `True = 1 or _` or just `v != Bool32.False`
+	static fun fromBool(value Bool) Bool32 {
+		if value {
+			return Bool32.True
+		}
+
+		return Bool32.False
+	}
+}
+
+// LONG is signed 32-bit int32_t
+
+// Similiar to handle, has nothing to do with async atomic memory access
+declare Atom = UInt16
+
+@struct
+class Rect {
+	var left Int32
+	var top Int32
+	var right Int32
+	var bottom Int32
+	// TODO const all fields or `Rect extends ConstRect`
+}
+
+@struct
+class PaintStruct {
+	// var xdc Handle // TODO Unused?
+	// var udc Handle
+	var hdc HDc
+	var fErase Bool32
+	// TODO this and other ByValue fields must be `let` to avoid unnecessary copy
+	// TODO how to disallow copy-from, not only copy-to?
+	var rcPaint ByValue<Rect>
+	var fRestore Bool32
+	var fIncUpdate Bool32
+	var rgbReserved ArrayByValue<UInt8, 32>
+}
+
+enum Message: UInt32 {
+	WM_NULL = 0x0000
+	WM_CREATE = 0x0001
+	WM_DESTROY = 0x0002
+	WM_MOVE = 0x0003
+	WM_SIZE = 0x0005
+	WM_ACTIVATE = 0x0006
+	WM_SET_FOCUS = 0x0007
+	WM_KILL_FOCUS = 0x0008
+	WM_ENABLE = 0x000A
+	WM_SET_REDRAW = 0x000B
+	WM_SET_TEXT = 0x000C
+	WM_GET_TEXT = 0x000D
+	WM_GET_TEXT_LENGTH = 0x000E
+	WM_PAINT = 0x000F
+	WM_CLOSE = 0x0010
+	WM_QUERY_END_SESSION = 0x0011
+	WM_QUIT = 0x0012
+	WM_QUERY_OPEN = 0x0013
+	WM_ERASE_BACKGROUND = 0x0014
+	WM_SYS_COLOR_CHANGE = 0x0015
+	WM_END_SESSION = 0x0016
+	WM_SHOW_WINDOW = 0x0018
+	WM_ACTIVATE_APP = 0x001C
+	WM_SET_CURSOR = 0x0020
+	WM_MOUSE_ACTIVATE = 0x0021
+	WM_CHILD_ACTIVATE = 0x0022
+	WM_QUEUE_SYNC = 0x0023
+	WM_GET_MIN_MAX_INFO = 0x0024
+	WM_CONTEXT_MENU = 0x007B
+	WM_STYLE_CHANGING = 0x007C
+	WM_STYLE_CHANGED = 0x007D
+	WM_DISPLAY_CHANGE = 0x007E
+	WM_GET_ICON = 0x007F
+	WM_SET_ICON = 0x0080
+	WM_NON_CLIENT_CREATE = 0x0081
+	WM_NON_CLIENT_DESTROY = 0x0082
+	WM_NON_CLIENT_CALC_SIZE = 0x0083
+	WM_NON_CLIENT_HIT_TEST = 0x0084
+	WM_NON_CLIENT_PAINT = 0x0085
+	WM_NON_CLIENT_ACTIVATE = 0x0086
+	WM_GET_DLG_CODE = 0x0087
+	WM_SYNC_PAINT = 0x0088
+	WM_NON_CLIENT_MOUSE_MOVE = 0x00A0
+	WM_NON_CLIENT_LEFT_BUTTON_DOWN = 0x00A1
+	WM_NON_CLIENT_LEFT_BUTTON_UP = 0x00A2
+	WM_NON_CLIENT_LEFT_BUTTON_DBL_CLK = 0x00A3
+	WM_NON_CLIENT_RIGHT_BUTTON_DOWN = 0x00A4
+	WM_NON_CLIENT_RIGHT_BUTTON_UP = 0x00A5
+	WM_NON_CLIENT_RIGHT_BUTTON_DBL_CLK = 0x00A6
+	WM_NON_CLIENT_MIDDLE_BUTTON_DOWN = 0x00A7
+	WM_NON_CLIENT_MIDDLE_BUTTON_UP = 0x00A8
+	WM_NON_CLIENT_MIDDLE_BUTTON_DBL_CLK = 0x00A9
+	BM_GET_CHECK = 0x00F0
+	BM_SET_CHECK = 0x00F1
+	BM_GET_STATE = 0x00F2
+	BM_SET_STATE = 0x00F3
+	BM_SET_STYLE = 0x00F4
+	BM_CLICK = 0x00F5
+	BM_GET_IMAGE = 0x00F6
+	BM_SET_IMAGE = 0x00F7
+	WM_KEY_FIRST = 0x0100
+	WM_KEY_DOWN = WM_KEY_FIRST // 0x0100
+	WM_KEY_UP = 0x0101
+	WM_CHAR = 0x0102
+	WM_DEAD_CHAR = 0x0103
+	WM_SYS_KEY_DOWN = 0x0104
+	WM_SYS_KEY_UP = 0x0105
+	WM_SYS_CHAR = 0x0106
+	WM_SYS_DEAD_CHAR = 0x0107
+	WM_KEY_LAST = 0x0108
+	WM_INIT_DIALOG = 0x0110
+	WM_COMMAND = 0x0111
+	WM_SYS_COMMAND = 0x0112
+	WM_TIMER = 0x0113
+	WM_MOUSE_MOVE = 0x0200
+	WM_LEFT_BUTTON_DOWN = 0x0201
+	WM_LEFT_BUTTON_UP = 0x0202
+	WM_RIGHT_BUTTON_DOWN = 0x0204
+	WM_RIGHT_BUTTON_UP = 0x0205
+	WM_MIDDLE_BUTTON_DOWN = 0x0207
+	WM_MIDDLE_BUTTON_UP = 0x0208
+	WM_SIZING = 0x0214
+}
+
+@struct
+class Point {
+	var x Int32
+	var y Int32
+}
+
+@struct
+class Size {
+	var cx Int32
+	var cy Int32
+}
+
+@struct @sizeOf(48)
+class Msg {
+	var hwnd HWnd
+	var message Message
+	var wParam WParam
+	var lParam LParam
+	var time UInt32
+	var pt ByValue<Point>
+	var lPrivate UInt32
+
+	new () { }
+}
+
+// TODO convention (actually may be any so must build universal call frame)
+declare WindowProcedure = (hWnd HWnd, uMsg Message, wParam WParam, lParam LParam) => LResult
+
+@struct @sizeOf(72)
+class WindowClass {
+	var style UInt32
+	var lpfnWndProc WindowProcedure
+	var cbClsExtra Int32
+	var cbWndExtra Int32
+	var hInstance HInstance
+	var hIcon HIcon
+	var hCursor HCursor
+	var hbrBackground HBrush
+	var lpszMenuName ConstArrayPointer<ClangWideChar>
+	var utf16zClassName ConstArrayPointer<ClangWideChar>
+	new () { }
+}
+
+enum CmdShow: Int32 {
+	SW_HIDE = 0
+	SW_SHOWNORMAL = 1
+	SW_NORMAL = SW_SHOWNORMAL
+	SW_SHOWMINIMIZED = 2
+	SW_SHOWMAXIMIZED = 3
+	SW_MAXIMIZE = SW_SHOWMAXIMIZED
+	SW_SHOWNOACTIVATE = 4
+	SW_SHOW = 5
+	SW_MINIMIZE = 6
+	SW_SHOWMINNOACTIVE = 7
+	SW_SHOWNA = 8
+	SW_SHOWRESTORE = 9
+	SW_SHOWDEFAULT = 10
+	SW_FORCEMINIMIZE = 11
+	SW_MAX = SW_FORCEMINIMIZE
+}
+
+// TODO `@byValue`
+@struct @packed @sizeOf(4) // TODO generate `sizeof` check in code
+class PixelRGBAData {
+	var r UInt8
+	var g UInt8
+	var b UInt8
+	var a UInt8
+	new () { }
+}
+
+// Union is pointer by default
+// TODO `@byValue`
+@union @sizeOf(4)
+@struct
+class Pixel32 {
+	var rgba ByValue<PixelRGBAData>
+	var color UInt32
+	new () { }
+}
+
+@struct
+class WindowFramebuffer {
+	// TODO map them again onto process memory space (<2Gb on 32 bit)
+	var pixels UInt64 // ArrayPointer<ByValue<Pixel32>>
+	var width UInt32
+	var height UInt32
+}
+
+@struct
+class DIALOGINFO {
+	var hwndFocus HWnd
+	var hUserFont HFont
+	var hMenu HMenu
+	var xBaseUnit UInt32
+	var yBaseUnit UInt32
+	var idResult Int32
+	var flags UInt32
+}

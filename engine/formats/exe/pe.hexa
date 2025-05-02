@@ -1,0 +1,285 @@
+// The Tofita Engine
+// Copyright (C) 2022-2025 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Structure of the PE32 format aka Portable Executable
+
+// 1 byte aligned
+@struct @packed @sizeOf(24)
+class PeHeader {
+	var magic UInt32 // PE\0\0 or 0x00004550
+	var machine UInt16
+	var numberOfSections UInt16
+	var timeDateStamp UInt32
+	var pointerToSymbolTable UInt32
+	var numberOfSymbols UInt32
+	var sizeOfOptionalHeader UInt16
+	var characteristics UInt16
+}
+
+// 1 byte aligned
+@struct @packed
+class Pe64OptionalHeader {
+	var magic UInt16 // 0x010b - PE32, 0x020b - PE32+ (64 bit)
+	var majorLinkerVersion UInt8
+	var minorLinkerVersion UInt8
+	var sizeOfCode UInt32
+	var sizeOfInitializedData UInt32
+	var sizeOfUninitializedData UInt32
+	var addressOfEntryPoint UInt32
+	var baseOfCode UInt32
+	var imageBase UInt64
+	var sectionAlignment UInt32
+	var fileAlignment UInt32
+	var majorOperatingSystemVersion UInt16
+	var minorOperatingSystemVersion UInt16
+	var majorImageVersion UInt16
+	var minorImageVersion UInt16
+	var majorSubsystemVersion UInt16
+	var minorSubsystemVersion UInt16
+	var win32VersionValue UInt32
+	var sizeOfImage UInt32
+	var sizeOfHeaders UInt32
+	var checkSum UInt32
+	var subsystem UInt16
+	var dllCharacteristics UInt16
+	var sizeOfStackReserve UInt64
+	var sizeOfStackCommit UInt64
+	var sizeOfHeapReserve UInt64
+	var sizeOfHeapCommit UInt64
+	var loaderFlags UInt32
+	var numberOfRvaAndSizes UInt32
+}
+
+// 1 byte aligned
+@struct @packed
+// TODO Hexa: <is64 Bool>
+class Pe32OptionalHeader {
+	var magic UInt16 // 0x010b - PE32, 0x020b - PE32+ (64 bit)
+	var majorLinkerVersion UInt8
+	var minorLinkerVersion UInt8
+	var sizeOfCode UInt32
+	var sizeOfInitializedData UInt32
+	var sizeOfUninitializedData UInt32
+	var addressOfEntryPoint UInt32
+	var baseOfCode UInt32
+	// TODO Hexa: @enableIf()
+	var baseOfData UInt32 // present only in 32-bit
+	var imageBase UInt32
+	var sectionAlignment UInt32
+	var fileAlignment UInt32
+	var majorOperatingSystemVersion UInt16
+	var minorOperatingSystemVersion UInt16
+	var majorImageVersion UInt16
+	var minorImageVersion UInt16
+	var majorSubsystemVersion UInt16
+	var minorSubsystemVersion UInt16
+	var win32VersionValue UInt32
+	var sizeOfImage UInt32
+	var sizeOfHeaders UInt32
+	var checkSum UInt32
+	var subsystem UInt16
+	var dllCharacteristics UInt16
+	var sizeOfStackReserve UInt32
+	var sizeOfStackCommit UInt32
+	var sizeOfHeapReserve UInt32
+	var sizeOfHeapCommit UInt32
+	var loaderFlags UInt32
+	var numberOfRvaAndSizes UInt32
+}
+
+@struct @packed @sizeOf(40)
+class ImageSectionHeader { // size 40 bytes
+	var name ArrayByValue<UInt8, 8>
+	var virtualSize UInt32
+	var virtualAddress UInt32
+	var sizeOfRawData UInt32
+	var pointerToRawData UInt32
+	var pointerToRealocations UInt32
+	var pointerToLinenumbers UInt32
+	var numberOfRealocations UInt16
+	var numberOfLinenumbers UInt16
+	var characteristics UInt32
+}
+
+let image_directory_entry_export = 0 // Export Directory
+let image_directory_entry_import = 1 // Import Directory
+let image_directory_entry_resource = 2 // Resource Directory
+let image_directory_entry_exception = 3 // Exception Directory
+let image_directory_entry_security = 4 // Security Directory
+let image_directory_entry_basereloc = 5 // Base Relocation Table
+let image_directory_entry_debug = 6 // Debug Directory
+// image_directory_entry_copyright       7   // (usage: X86)
+let image_directory_entry_architecture = 7 // Architecture Specific Data
+let image_directory_entry_globalptr = 8 // RVA of GP
+let image_directory_entry_tls = 9 // TLS Directory
+let image_directory_entry_load_config = 10 // Load Configuration Directory
+let image_directory_entry_bound_import = 11 // Bound Import Directory in headers
+let image_directory_entry_iat = 12 // Import Address Table
+let image_directory_entry_delay_import = 13 // Delay Load Import Descriptors
+let image_directory_entry_com_descriptor = 14 // COM Runtime descriptor
+
+enum ImageDirectoryType : UInt8 {
+	IMAGE_DIRECTORY_ENTRY_EXPORT = 0 // EXPORT DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_IMPORT = 1 // IMPORT DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_RESOURCE = 2 // RESOURCE DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3 // EXCEPTION DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_SECURITY = 4 // SECURITY DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_BASERELOC = 5 // BASE RELOCATION TABLE
+	IMAGE_DIRECTORY_ENTRY_DEBUG = 6 // DEBUG DIRECTORY
+	// IMAGE_DIRECTORY_ENTRY_COPYRIGHT       7   // (USAGE: X86)
+	IMAGE_DIRECTORY_ENTRY_ARCHITECTURE = 7 // ARCHITECTURE SPECIFIC DATA
+	IMAGE_DIRECTORY_ENTRY_GLOBALPTR = 8 // RVA OF GP
+	IMAGE_DIRECTORY_ENTRY_TLS = 9 // TLS DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG = 10 // LOAD CONFIGURATION DIRECTORY
+	IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT = 11 // BOUND IMPORT DIRECTORY IN HEADERS
+	IMAGE_DIRECTORY_ENTRY_IAT = 12 // IMPORT ADDRESS TABLE
+	IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13 // DELAY LOAD IMPORT DESCRIPTORS
+	IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR = 14 // COM RUNTIME DESCRIPTOR
+}
+
+@struct class IMAGE_EXPORT_DIRECTORY {
+	var characteristics UInt32
+	var timeDateStamp UInt32
+	var majorVersion UInt16
+	var minorVersion UInt16
+	var name UInt32
+	var base UInt32
+	var numberOfFunctions UInt32
+	var numberOfNames UInt32
+	var addressOfFunctions UInt32
+	var addressOfNames UInt32
+	var addressOfNameOrdinals UInt32
+}
+
+@struct class IMAGE_BASE_RELOCATION { // TODO invalid name _Name
+	var virtualAddress UInt32
+	var sizeOfBlock UInt32
+}
+
+@struct class IMAGE_DATA_DIRECTORY {
+	var virtualAddress UInt32
+	var size UInt32
+}
+
+@packed @struct
+class IMAGE_RESOURCE_DIRECTORY_ENTRY_NAME_STRING {
+	// TODO Hexa: @bits don't work with `let` `@bits(31) let nameOffset UInt32`
+	@bits(31) var nameOffset UInt32
+	@bits(1) var nameIsString UInt32
+}
+
+@packed @struct @union
+class IMAGE_RESOURCE_DIRECTORY_ENTRY_NAME {
+	let string ByValue<IMAGE_RESOURCE_DIRECTORY_ENTRY_NAME_STRING>
+	let name UInt32
+	let id UInt16
+}
+
+@packed @struct
+class IMAGE_RESOURCE_DIRECTORY_ENTRY_OFFSET_DIRECTORY {
+	@bits(31) var offsetToDirectory UInt32
+	@bits(1) var dataIsDirectory UInt32
+}
+
+@packed @struct @union
+class IMAGE_RESOURCE_DIRECTORY_ENTRY_OFFSET {
+	let offsetToData UInt32
+	let string ByValue<IMAGE_RESOURCE_DIRECTORY_ENTRY_OFFSET_DIRECTORY>
+}
+
+@packed @struct class IMAGE_RESOURCE_DIRECTORY_ENTRY {
+	let unionName ByValue<IMAGE_RESOURCE_DIRECTORY_ENTRY_NAME>
+	let unionOffset ByValue<IMAGE_RESOURCE_DIRECTORY_ENTRY_OFFSET>
+}
+
+@packed @struct class IMAGE_RESOURCE_DATA_ENTRY {
+	let offsetToData UInt32
+	let size UInt32
+	let codePage UInt32
+	let reserved UInt32
+}
+
+@packed @struct class GRPICONDIRENTRY {
+	let bWidth UInt8
+	let bHeight UInt8
+	let bColorCount UInt8
+	let bReserved UInt8
+	let wPlanes UInt16
+	let wBitCount UInt16
+	let dwBytesInRes UInt32
+	let nID UInt16
+}
+
+@packed @struct class GRPICONDIR {
+	let idReserved UInt16
+	let idType UInt16
+	let idCount UInt16
+	var idEntries ArrayByValue<ByValue<GRPICONDIRENTRY>, 1>
+}
+
+// TODO `let` here and everywhere
+@packed
+@struct class IMAGE_RESOURCE_DIRECTORY {
+	var characteristics UInt32
+	var timeDateStamp UInt32
+	var majorVersion UInt16
+	var minorVersion UInt16
+	var numberOfNamedEntries UInt16
+	var numberOfIdEntries UInt16
+	var directoryEntries ArrayByValue<ByValue<IMAGE_RESOURCE_DIRECTORY_ENTRY>, 1>
+}
+
+enum ImageRelocationType : Int32 {
+	IMAGE_REL_BASED_ABSOLUTE = 0
+	IMAGE_REL_BASED_DIR64 = 10
+	IMAGE_REL_BASED_HIGHLOW = 3
+}
+
+let image_sizeof_base_relocation = 8u64
+let image_rel_based_absolute = 0
+let image_rel_based_dir64 = 10
+let image_rel_based_highlow = 3
+
+@struct @packed class IMAGE_IMPORT_DESCRIPTOR {
+	// _ANONYMOUS_UNION union {
+	// var characteristics UInt32
+	var originalFirstThunk UInt32
+	// } DUMMYUNIONNAME
+	var timeDateStamp UInt32
+	var forwarderChain UInt32
+	var name UInt32
+	var firstThunk UInt32
+}
+
+// TODO rename to TitleCase
+// TODO make all `let` not `var` same for other types
+@struct class IMAGE_IMPORT_BY_NAME {
+	var hint UInt16
+	var name ArrayByValue<UInt8, 1>
+}
+
+@struct
+@union // TODO disallows `@struct`
+class IMAGE_THUNK_DATA<SIZE> {
+	/// Address of imported function
+	var func SIZE
+	/// Ordinal value of function
+	var ordinal UInt32
+	/// RVA of imported name
+	/// ^ points to `IMAGE_IMPORT_BY_NAME?`
+	var addressOfData SIZE
+	/// RVA to forwarder string
+	var forwarderString UInt32
+}

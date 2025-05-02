@@ -1,0 +1,48 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Globals
+var paramsCache = null as! UefiPayload
+
+// For syscalls & scheduler
+// TODO `@volatile class X {}` ?
+@volatile var pml4engineThread = null as! ArrayPointer<ByValue<PageEntry>>
+
+// Flag to keep in engine mode and not switch to user mode
+@volatile var engineBusy = false
+
+// Avoids PIT-triggered rendering
+// This is not a best solution
+@volatile var haveToRender = true
+
+// Mouse cursor repaint
+@volatile var haveToRenderMouseCursor = false
+
+var uptimeMilliseconds UInt64 = 0
+
+// TODO wipe this feature for now? or fix?
+var startupMilliseconds UInt64 = 0
+
+@rename('libc_memset')
+declare fun memset(dest ArrayPointer<UInt8>, e Int32, len UInt64) Void
+
+/*{
+	var d = dest
+	for i in len {
+		d[i] = e
+		// TODO UInt8 = Int32 error
+	}
+} TODO fix comments highlighting
+// */

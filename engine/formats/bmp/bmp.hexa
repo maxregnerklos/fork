@@ -1,0 +1,52 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// TODO read memory in the safe way, pre-test via SEH
+// Note: simply SEH is bad, cause it is *paging* check, not *file bounds* check
+// ^ delphi file stream? read-at, read-and-offset, seek
+// may load whole scan line and reorder it later to avoid bound checking every pixel
+// stream.readUInt8At(123) ?? throw-guard or default
+fun loadBitMap24(asset RamDiskAsset) Bitmap32 {
+	let buffer = asset.data as! UInt64
+	// TODO uint32_t width_ = (buffer_ + (uint32_t*)((int32_t)18))[(int32_t)0];
+	// also int32_t is wrong
+	let width = ((buffer + 18) as! ArrayPointer<UInt32>)[0]
+	let height = ((buffer + 22) as! ArrayPointer<UInt32>)[0]
+	let start = ((buffer + 10) as! ArrayPointer<UInt32>)[0]
+
+	let bmp = allocateBitmap(width, height)
+	// Old way: `let colors = buffer + 54 as! ArrayPointer<UInt8>`
+	let colors = buffer + start as! ArrayPointer<UInt8>
+	var pad = 0u64
+
+	if (width % 4) != 0 {
+		pad = width % 4
+	}
+
+	for y in bmp.height {
+		let colors = buffer + start + ((height - y - 1) * (width * 3u64 + pad))
+		for x in bmp.width {
+			// TODO optimize to `@defer x += 3`
+			let color = (colors + (x * 3u64)) as! ArrayPointer<UInt8>
+			// TODO better idea how to do this conversion?
+			bmp.pixels[y * width + x].ref.rgba.ref.a = 255 // transparency
+			bmp.pixels[y * width + x].ref.rgba.ref.r = color[0]
+			bmp.pixels[y * width + x].ref.rgba.ref.g = color[1]
+			bmp.pixels[y * width + x].ref.rgba.ref.b = color[2]
+		}
+	}
+
+	return bmp
+}

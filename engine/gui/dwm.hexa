@@ -1,0 +1,620 @@
+// The Tofita Engine
+// Copyright (C) 2022-2025 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Desktop window manager (i.e. GUI logic)
+
+var nextDefaultWindowPosition UInt8 = 0
+
+fun overlappedWindow_create(pid UInt64) OverlappedWindow {
+	var index UInt64 = 0
+	// TODO old way here, simply push
+	while index < windowsLimit - 1 {
+		index++ // Null-window not used directly
+		if index == windowsLimit {
+			return null
+		}
+		if windowsList[index].present != true {
+			break
+		}
+	}
+
+	// TODO new Window instead of [i]
+	var window = windowsList[index]
+	window.windowId = index
+	window.pid = pid
+	window.present = true
+	window.visible = false
+	window.width = 500 // TODO actual wapi default values
+	window.height = 300 // TODO actual wapi default values
+
+	// Calculate default position
+	window.x = 200 + 48 * nextDefaultWindowPosition // TODO actual wapi default values
+	window.y = 100 + 48 * nextDefaultWindowPosition // TODO actual wapi default values
+	nextDefaultWindowPosition++
+	if nextDefaultWindowPosition > 8 {
+		nextDefaultWindowPosition = 0
+	}
+
+	window.fbZeta = null
+	window.fbGama = null
+	window.fbCurrentZeta = true
+	window.title = "" // TODO Hexa: nullability was an issue for titles once, just a notable case
+	window.hWnd = null
+	window.prevId = 0
+	window.nextId = 0
+	window.icon = app16
+
+	// Adding a mouse handler
+	let rectangle = new ColliderRectangle(window.windowId, windowHandler)
+	rectangle.hint = hintOfWindow
+	// TODO probably just use UInt16 or Int16 for rect size
+	// TODO Hexa: hint when var fields are set etc, but var itself *not used*
+	// ^ cause forgot to push that rect to array
+	defaultSession.taskbarWindowList.children.push(rectangle)
+	defaultSession.resizeWindowList()
+
+	return window
+}
+
+fun overlappedWindow_find(pid UInt64, windowId UInt64) OverlappedWindow {
+	var index UInt64 = 0
+	while index < windowsLimit - 1 {
+		index++
+		if index == windowsLimit {
+			return null
+		}
+		var window = windowsList[index]
+		if window.present == true and window.pid == pid and window.windowId == windowId {
+			return window
+		}
+	}
+	return null
+}
+
+fun overlappedWindow_findAnyProcessWindow(pid UInt64) OverlappedWindow {
+	var index UInt64 = 0
+	while index < windowsLimit - 1 {
+		index++
+		if index == windowsLimit {
+			return null
+		}
+		var window = windowsList[index]
+		if window.present == true and window.pid == pid {
+			return window
+		}
+	}
+	return null
+}
+
+fun overlappedWindow_detach(windowId UInt64) {
+	var window = windowsList[windowId]
+
+	windowsList[window.prevId].nextId = window.nextId
+	windowsList[window.nextId].prevId = window.prevId
+
+	if topmostWindow == windowId {
+		topmostWindow = window.prevId
+	}
+
+	if firstResponder == windowId {
+		firstResponder = window.prevId
+
+		while windowsList[firstResponder].visible == false and firstResponder != 0 {
+			firstResponder = windowsList[firstResponder].prevId
+		}
+	}
+
+	if rootWindow == windowId {
+		rootWindow = window.nextId
+	}
+
+	window.prevId = 0
+	window.nextId = 0
+}
+
+fun overlappedWindow_attach(windowId UInt64) {
+	windowsList[topmostWindow].nextId = windowId
+
+	windowsList[windowId].prevId = topmostWindow
+	windowsList[windowId].nextId = 0
+	topmostWindow = windowId
+
+	if windowsList[windowId].prevId == 0 {
+		rootWindow = 0
+	}
+
+	if windowsList[windowId].visible {
+		firstResponder = windowId
+	}
+}
+
+fun overlappedWindow_destroy(windowId UInt64) {
+	var window = windowsList[windowId]
+	overlappedWindow_detach(windowId)
+
+	window.present = false
+	window.hWnd = null
+	window.visible = false
+	// TODO de-allocate
+	window.fbZeta = null
+	window.fbGama = null
+
+	for i in defaultSession.taskbarWindowList.children.length {
+		let rectangle = defaultSession.taskbarWindowList.children[i]
+		if rectangle.id == window.windowId {
+			rectangle.enabled = false
+		}
+	}
+
+	defaultSession.resizeWindowList()
+
+	requestAnimationFrame()
+}
+
+fun initDwm() {
+	mouseX = _framebuffer.width / 2i16
+	mouseY = _framebuffer.height / 2i16
+}
+
+/// Detects frame button under cursor like `Close`
+fun getFrameButton(mouseX Int16, mouseY Int16, windowId UInt64) FrameHover {
+	if windowId == 0 {
+		return FrameHover.Noop
+	}
+
+	var window = windowsList[windowId]
+	let frameButtonsWidth UInt16 = 137
+
+	let y = window.y
+	let x = window.x + window.width - frameButtonsWidth
+
+	let frameHeight = 30 + 3
+
+	let xx = x + frameButtonsWidth
+	let yy = y + frameHeight
+
+	if mouseX >= x, mouseX <= xx, mouseY >= y, mouseY <= yy {
+		let diff UInt8 = (mouseX - x) / 46u8
+		if diff == 0 {
+			return FrameHover.Min
+		}
+		if diff == 1 {
+			return FrameHover.Max
+		}
+		return FrameHover.Close
+	}
+
+	return FrameHover.Noop
+}
+
+fun isShouldIgnoreOutsideWindow() {
+	// TODO ignore everything when is down-in-window-and-moved outside of window
+	return mouseDragCapturedWindow or frameHoverWindowDown
+}
+
+fun handleMouseMove(mouseX Int16, mouseY Int16) {
+	if not isShouldIgnoreOutsideWindow() {
+		if defaultSession.mouseMove(mouseX, mouseY) {
+			if frameHoverState != FrameHover.Noop {
+				// TODO Hexa: Disallow `==` *statements* is really must have
+				frameHoverState = FrameHover.Noop
+				requestAnimationFrame()
+			}
+			return
+		}
+	}
+
+	// TODO Hexa: this was actually error as if (as!) was calling expr(as!)
+	// (defaultSession as! GraphicalSession).desktopHandle(0, ColliderEventType.MouseUp)
+
+	// TODO window is nullable
+	// TODO could be just `mouseDragWindow Window? = current` instead of getting by id, same for others
+	let window = windowsList[mouseDragWindow]
+
+	// TODO disallow drag past taskbar + respect taskbar position on screen
+	if mouseDragCapturedWindow and window.present and window.visible {
+		let diffX = mouseX - mouseDragLastX
+		let diffY = mouseY - mouseDragLastY
+
+		window.x += diffX
+		window.y += diffY
+
+		// Assuming diff != 0
+		haveToRender = true
+
+		// TODO should do this smooth on mouse up
+		if window.y < 0 {
+			window.y = 0i16
+		}
+
+		mouseDragLastX = mouseX
+		mouseDragLastY = mouseY
+
+		return
+	}
+	// TODO `else mouseDragCapturedWindow = false`?
+
+	// TODO Hexa: `not`
+	if not frameHoverWindowDown {
+		let _frameHoverWindow = frameHoverWindow
+		let _frameHoverState = frameHoverState
+
+		frameHoverWindow = findWindowUnderCursor(mouseX, mouseY)
+		frameHoverState = getFrameButton(mouseX, mouseY, frameHoverWindow)
+
+		haveToRender = haveToRender or (frameHoverWindow != _frameHoverWindow) or (_frameHoverState != frameHoverState)
+		// TODO must error `=` assign `or (_frameHoverState = frameHoverState)` (both let and non-bool)
+	} else {
+		let _frameHoverWindowInsideButtonArea = frameHoverWindowInsideButtonArea
+		frameHoverWindowInsideButtonArea = getFrameButton(mouseX, mouseY, frameHoverWindow) == frameHoverState
+		haveToRender = haveToRender or (frameHoverWindowInsideButtonArea != _frameHoverWindowInsideButtonArea)
+	}
+
+	// TODO check for first responder
+	let current = findWindowUnderCursor(mouseX, mouseY)
+	let combineMouseMoves = true
+
+	if current != 0 {
+		let window = windowsList[current]
+		let payload = new ByValue<PostMessagePayload>()
+		let payload = payload.ref
+		payload.hWnd = window.hWnd as! UInt64
+		// TODO RMB, MMB etc
+		payload.msg = Message.WM_MOUSE_MOVE
+		payload.wParam = null
+		payload.lParam = LParam.makeLong(mouseX - window.x, mouseY - window.y) as! UInt64
+		let process TofitaProcess = processes[window.pid]
+
+		if combineMouseMoves,
+			let messages = getOrCreateMessagesBuffer(process),
+			process.messagesUsed > 0,
+			let last = messages[process.messagesUsed - 1],
+			last.hwnd == (payload.hWnd as! Handle),
+			last.message == payload.msg
+		{
+			last.lParam = payload.lParam as! LParam
+			// TODO more fields?
+		} else {
+			postMessage(process, payload)
+		}
+	}
+}
+
+/// Returns zero by default, otherwise index in windows list
+fun findWindowUnderCursor(mouseX Int16, mouseY Int16) UInt64 {
+	var windowId = topmostWindow
+
+	do {
+		let window = windowsList[windowId]
+
+		// TODO
+		if window == null {
+			break
+		}
+
+		// TODO depend on style
+		let frameHeight = 30 + 3
+		let frameWidth = 1
+
+		let x = window.x - 1
+		let y = window.y - 1
+
+		let xx = x + window.width + frameWidth
+		let yy = y + window.height + frameHeight
+
+		// TODO .visible? active etc?
+		if not window.minimized {
+			if mouseX >= x and mouseX <= xx and mouseY >= y and mouseY <= yy {
+				return windowId
+			}
+		}
+
+		windowId = window.prevId
+	} while (windowId != 0)
+
+	return 0
+}
+
+var previousResponder UInt64 = 0
+fun selectMouseNextResponder(mouseX Int16, mouseY Int16) {
+	// TODO hexa unconditional recursion firstResponder = selectMouseNextResponder(mouseX, mouseY)
+	let newResponder = findWindowUnderCursor(mouseX, mouseY)
+
+	if firstResponder != newResponder {
+		requestAnimationFrame()
+	}
+
+	previousResponder = firstResponder
+	firstResponder = newResponder
+}
+
+fun isDraggableFrame(mouseX Int16, mouseY Int16, windowId UInt64) Bool {
+	if windowId == 0 {
+		return false
+	}
+
+	var window = windowsList[windowId]
+
+	let y = window.y
+	let x = window.x
+
+	let frameHeight = 30 + 3
+	let frameButtonsWidth UInt16 = 137
+
+	let xx = x + window.width - frameButtonsWidth
+	let yy = y + frameHeight
+
+	if mouseX >= x and mouseX <= xx and mouseY >= y and mouseY <= yy {
+		return true
+	}
+
+	return false
+}
+
+fun bringWindowToFront(windowId UInt64) {
+	if windowId == 0 {
+		return
+	}
+	overlappedWindow_detach(windowId)
+	overlappedWindow_attach(windowId)
+}
+
+fun isFrontWindow(windowId UInt64) Bool {
+	// TODO Hexa: well still value-returning assign seems harmful `return topmostWindow = windowId`
+	return topmostWindow == windowId
+}
+
+fun handleMouseDown(type MouseActionType, mouseX Int16, mouseY Int16) {
+	// TODO should reset on different responder id?
+	startClick(mouseX, mouseY)
+
+	if defaultSession.mouseDown(type, mouseX, mouseY) {
+		return
+	}
+
+	if firstResponder != 0 and firstResponder != topmostWindow {
+		bringWindowToFront(firstResponder)
+		requestAnimationFrame()
+	}
+
+	if type == MouseActionType.LeftDown and isDraggableFrame(mouseX, mouseY, firstResponder) {
+		if isDoubleClick {
+			// TODO send message to wapi
+			minimize(firstResponder) // TODO should actually maximize and normalize
+			requestAnimationFrame()
+			return
+		}
+
+		mouseDragCapturedWindow = true
+		mouseDragWindow = firstResponder
+		mouseDragLastX = mouseX
+		mouseDragLastY = mouseY
+	}
+
+	if type == MouseActionType.LeftDown and frameHoverState != FrameHover.Noop {
+		frameHoverWindowDown = true
+		frameHoverWindowInsideButtonArea = true
+		// TODO Hexa: fun as st useless error `requestAnimationFrame` note lack of `()`
+		requestAnimationFrame()
+
+		return
+	}
+
+	// TODO check for first responder
+	let current = findWindowUnderCursor(mouseX, mouseY)
+	if current != 0 {
+		let window = windowsList[current]
+		let payload = new ByValue<PostMessagePayload>()
+		let payload = payload.ref
+		payload.hWnd = window.hWnd as! UInt64
+		// TODO RMB, MMB etc
+		payload.msg = Message.WM_LEFT_BUTTON_DOWN
+		payload.wParam = null
+		payload.lParam = LParam.makeLong(mouseX - window.x, mouseY - window.y) as! UInt64
+		let process TofitaProcess = processes[window.pid]
+		postMessage(process, payload)
+	}
+}
+
+fun minimize(windowId UInt64) {
+	var window = windowsList[windowId]
+	window.minimized = true // Do this upfront!
+	// TODO ensure prevId can be valid 0 and not garbage
+	// Here we find next non-minimized window and un-minimize it
+	firstResponder = window.prevId
+	while firstResponder != 0 and window.minimized {
+		// First iteration is current window itself
+		firstResponder = window.prevId
+		window = windowsList[firstResponder]
+	}
+
+	bringWindowToFront(firstResponder)
+}
+
+fun handleMouseUp(type MouseActionType, mouseX Int16, mouseY Int16) {
+	if not frameHoverWindowDown, defaultSession.mouseUp(type, mouseX, mouseY) {
+		return
+	}
+
+	if type == MouseActionType.LeftUp {
+		mouseDragCapturedWindow = false
+	}
+
+	if frameHoverWindowDown {
+		frameHoverWindow = findWindowUnderCursor(mouseX, mouseY)
+		let hover = getFrameButton(mouseX, mouseY, frameHoverWindow)
+		let window = windowsList[frameHoverWindow]
+
+		if hover == frameHoverState and window.present {
+			if frameHoverState == FrameHover.Min {
+				// TODO send message to wapi
+				minimize(frameHoverWindow)
+				requestAnimationFrame()
+			}
+
+			if frameHoverState == FrameHover.Max {
+				// TODO send message to wapi
+			}
+
+			if frameHoverState == FrameHover.Close {
+				let payload PostMessagePayload = new PostMessagePayload()
+
+				payload.hWnd = window.hWnd as! UInt64
+				payload.msg = Message.WM_CLOSE
+				payload.wParam = null
+				payload.lParam = null
+
+				let process TofitaProcess = processes[window.pid]
+				postMessage(process, payload)
+			}
+		}
+
+		frameHoverState = hover
+		frameHoverWindowDown = false
+		requestAnimationFrame()
+
+		return
+	}
+
+	// TODO check for first responder
+	let current = findWindowUnderCursor(mouseX, mouseY)
+	if current != 0 {
+		let window = windowsList[current]
+		let payload = new ByValue<PostMessagePayload>()
+		let payload = payload.ref
+		payload.hWnd = window.hWnd as! UInt64
+		// TODO RMB, MMB etc
+		payload.msg = Message.WM_LEFT_BUTTON_UP
+		payload.wParam = null
+		payload.lParam = LParam.makeLong(mouseX - window.x, mouseY - window.y) as! UInt64
+		let process TofitaProcess = processes[window.pid]
+		postMessage(process, payload)
+	}
+}
+
+fun handleMouseActivity() {
+	if lockMouse {
+		return
+	}
+
+	// Swap buffers
+	mouseActionsUseZeta = not mouseActionsUseZeta
+
+	@volatile let mouseActions [MouseAction] = (not mouseActionsUseZeta) ? mouseActionsZeta : mouseActionsGama
+
+	let mouseActionsAmount UInt8 =
+		(not mouseActionsUseZeta) ? mouseActionsZetaAmount : mouseActionsGamaAmount
+
+	var mouseXtemp = mouseX
+	var mouseYtemp = mouseY
+
+	for i in mouseActionsAmount {
+		let type = mouseActions[i].type
+
+		if type == MouseActionType.Moved {
+
+			mouseXtemp += mouseActions[i].mouseXdiff
+			mouseYtemp += mouseActions[i].mouseYdiff
+
+			if mouseYtemp < 0 {
+				mouseYtemp = 0
+			}
+			if mouseXtemp < 0 {
+				mouseXtemp = 0
+			}
+
+			// TODO Screen. screen.hexa
+			if mouseXtemp > _framebuffer.width {
+				mouseXtemp = _framebuffer.width as! Int16 // TODO just make mouseX same precision
+			}
+			if mouseYtemp > _framebuffer.height {
+				mouseYtemp = _framebuffer.height as! Int16
+			}
+
+			handleMouseMove(mouseXtemp, mouseYtemp)
+		} else if (type == MouseActionType.LeftUp or type == MouseActionType.RightUp or
+				type == MouseActionType.MiddleUp) {
+			handleMouseUp(type, mouseXtemp, mouseYtemp)
+		} else if (type == MouseActionType.LeftDown or type == MouseActionType.RightDown or
+				type == MouseActionType.MiddleDown) {
+			handleMouseDown(type, mouseXtemp, mouseYtemp)
+		}
+
+		mouseActions[i].type = MouseActionType.Noop
+	}
+
+	if not mouseActionsUseZeta {
+		mouseActionsZetaAmount = 0
+	}
+	if mouseActionsUseZeta {
+		mouseActionsGamaAmount = 0
+	}
+
+	// Atomically update
+	if mouseX != mouseXtemp or mouseY != mouseYtemp {
+		haveToRenderMouseCursor = true
+	}
+
+	mouseX = mouseXtemp
+	mouseY = mouseYtemp
+}
+
+var pressedState ArrayByValue<UInt8, 256> = [0]
+fun handleKeyboardActivity() {
+	// Copy to stack
+	// TODO Hexa: `var pressedState ArrayByValue<UInt8, 256> = keyboardEvents` wrong place of `[256]`
+	// TODO pressedState = keyboardEvents
+	for i in keyboardEventsLength {
+		pressedState[i] = keyboardEvents[i]
+	}
+
+	let events = keyboardEventsLength
+	// Reset
+	keyboardEventsLength = 0
+
+	for event in events {
+		let keycode = pressedState[event]
+		if keycode < 128 {
+			// Down
+			// TODO push into events and window messages
+		} else {
+			// Up
+			let keycode = keycode - 128u8
+
+			if keycode == 91 {
+				// Start button
+				// TODO Hotkeys detection
+				// TODO just `.toggleStart()`
+				defaultSession.showStart = not defaultSession.showStart
+				requestAnimationFrame()
+			}
+		}
+	}
+}
+
+fun startClick(mouseX Int16, mouseY Int16) {
+	let diff = uptimeMilliseconds - clickStartTimestamp
+	clickStartTimestamp = uptimeMilliseconds
+	// TODO get from theme
+	// TODO some valid zone even when newX != oldX
+	isDoubleClick = diff < 480 and clickStartX == mouseX and clickStartY == mouseY
+	clickStartX = mouseX
+	clickStartY = mouseY
+	// Gamers have achieved more than 8 CPS in regular clicking
+	// Someone said the practical limit is 17 clicks per second
+	// Some games ban for >20 CPS
+	// Thus it should at least ignore >20-25 CPS
+	// TODO `isDoubleClick = isDoubleClick and diff > N` to ignore faulty mouses
+}

@@ -1,0 +1,55 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Tofita
+let _fltused Int64 = 0
+
+// Only ecx/edx available in x86-32 fastcall, so use rcx/rdx pair only
+@convention('fastcall')
+// TODO ^ template substitution for var names in decorators by default
+declare fun tofitaFastSystemCall(rcx TofitaSyscalls,
+	#if bit64
+		rdx UInt64 = 0
+	#else
+		rdx UInt32 = 0
+	#end
+) #if bit64 UInt64 #else UInt32 #end
+// TODO link name + dll import
+@fastcall declare fun tofitaFastStub(rcx UInt64, rdx UInt64) UInt32
+@stdcall declare fun tofitaStdStub(arg ConstArrayPointer<UInt8>) UInt32
+
+// TODO @convention('fastcall')
+@dllImport @linkAsIs
+declare fun tofitaDebugLog(message ConstArrayPointer<ClangWideChar>, extra UInt64 = 0, more UInt64 = 0) Void
+
+// General
+@dllImport @linkAsIs
+declare fun tofitaExitProcess(exitCode UInt32) Void
+
+// User Interface
+@dllImport @linkAsIs
+declare fun tofitaCreateWindowEx(payload CreateWindowExPayload) UInt64
+@dllImport @linkAsIs
+declare fun tofitaShowWindow(windowId UInt64, nCmdShow CmdShow) Void
+@dllImport @linkAsIs
+declare fun tofitaGetMessage(payload GetMessagePayload) Bool32
+@dllImport @linkAsIs
+declare fun tofitaPostMessage(payload PostMessagePayload) Bool32
+
+// NjRAA
+@dllImport @linkAsIs
+declare fun njraaGetOrCreateWindowFramebuffer(windowId UInt64, fb WindowFramebuffer) Void
+@dllImport @linkAsIs
+declare fun njraaSwapWindowFramebuffer(windowId UInt64, fb WindowFramebuffer) Void

@@ -1,0 +1,19 @@
+// Maxregneros UI Animation Utilities
+class Animation {
+    var from: Float
+    var to: Float
+    var duration: Float
+    var elapsed: Float = 0.0
+
+    new(from: Float, to: Float, duration: Float) {
+        self.from = from
+        self.to = to
+        self.duration = duration
+    }
+
+    fun update(dt: Float) -> Float {
+        self.elapsed += dt
+        let t = min(self.elapsed / self.duration, 1.0)
+        return self.from + (self.to - self.from) * t
+    }
+} 

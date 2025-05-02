@@ -1,0 +1,21 @@
+// Maxregneros UI Widgets (Modern, Flat)
+import engine.gui.compositor
+import engine.gui.theme
+
+class Button: Widget {
+    var rect: Rect
+    var label: String
+    var onClick: Func
+
+    new(rect: Rect, label: String, onClick: Func) {
+        self.rect = rect
+        self.label = label
+        self.onClick = onClick
+    }
+
+    fun draw(comp: Compositor, theme: Theme, parent: Rect) {
+        let btnRect = Rect(parent.x + self.rect.x, parent.y + self.rect.y, self.rect.w, self.rect.h)
+        comp.drawRect(btnRect, theme.accent, 4)
+        comp.drawText(self.label, btnRect.x + 10, btnRect.y + 8, theme.font, Color(255,255,255))
+    }
+} 

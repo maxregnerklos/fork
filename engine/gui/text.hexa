@@ -1,0 +1,310 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Simple bitmap font drawing
+// Non-monospace
+
+var textFontBitmap Bitmap32 = null
+
+@struct @packed @sizeOf(12)
+class TextFontList {
+	var x UInt16
+	var y UInt16
+	var width Float
+}
+
+// TODO just use `[Const]ArrayPointer`? cause same meaning? `ArrayByValuePointer`?
+var textFontList ArrayPointer<ByValue<TextFontList>> = null as! ArrayPointer<ByValue<TextFontList>>
+
+fun initText() {
+	var textFont = getRamDiskAsset("ascii.tofita")
+	textFontList = textFont.data as! ArrayPointer<ByValue<TextFontList>>
+
+	var font = getRamDiskAsset("root/Windows/Fonts/ascii.png")
+	textFontBitmap = loadPng32(font)
+}
+
+fun getLigatureAdvance(left UInt8, right UInt8) Int8 {
+	if left == 0 {
+		return 0i8 // TODO i8
+	}
+
+	if right == 0 {
+		return 0i8
+	}
+
+	return 8i8
+}
+
+// TODO unicode
+fun getCharAdvance(c UInt8) Float {
+	if textFontList == null {
+		// TODO is this test is needed?
+		return 8
+	}
+
+	let textChar TextFontList = textFontList[c].ref
+
+	return textChar.width
+}
+
+fun getTextAdvance(text String) UInt16 {
+	var i UInt16 = 0
+	var xx Float = 0
+	let text = text.utf16() as! ConstArrayPointer<UInt16>
+
+	while text[i] != 0 and i < 255 * 255 {
+		xx += textFontList[text[i] as! Int].ref.width
+		i++
+	}
+
+	return xx as! UInt16
+}
+
+fun drawChar(c UInt8, x Float, y Int16, color Pixel32) Float {
+	let textChar = textFontList[c as! Int].ref
+	// TODO parses `let textChar textChar.ref`
+
+	let xx Int16 = (x + 0.5) as! Int32 as! Int16
+	let w UInt8 = (textChar.width + 0.5) as! Int32 as! UInt8
+	let screenWidth = Screen.width
+	let screenHeight = Screen.height
+	let textFontBitmapPixels = textFontBitmap.pixels
+	let color = color.rgba.ref
+	let r = color.r
+	let g = color.r
+	let b = color.r
+
+	for yi in 12 {
+		let scanline = (textChar.y + yi) * textFontBitmap.width
+		for xi in w {
+			let atx Int32 = xx + xi
+			let aty Int32 = y + yi
+
+			let offset = aty * screenWidth + atx
+
+			if atx >= screenWidth or atx < 0 or aty >= screenHeight or aty < 0 {
+				continue
+			}
+			let font =
+				textFontBitmapPixels[scanline + (textChar.x + xi)].ref.rgba.ref
+
+			let pValue = Screen.pixels[offset]
+			let p = pValue.ref.rgba
+			// TODO p.r is actually p.b so maybe blend r<->b?
+			p.ref.r = blend255(p.ref.r, r, font.r)
+			p.ref.g = blend255(p.ref.g, g, font.g)
+			p.ref.b = blend255(p.ref.b, b, font.b)
+			Screen.pixels[offset].ref.rgba = p
+			// TODO `no known conversion from 'Pixel32_ *' to 'const Pixel32_'`
+			// `_pixels[aty * _framebuffer.width + atx] = p`
+		}
+	}
+
+	return textChar.width
+}
+
+fun drawAlphaChar(c UInt8, x Float, y Int16, color Pixel32) Float {
+	var textChar TextFontList = textFontList[c as! Int].ref
+
+	var xx Int16 = (x + 0.5) as! Int16
+	var w UInt8 = (textChar.width + 0.5) as! UInt8
+
+	for yi in 12 {
+		for xi in w {
+			let atx Int16 = (xx as! Int16) + (xi as! Int16)
+			let aty Int16 = (y as! Int16) + (yi as! Int16)
+
+			if atx >= Screen.width {
+				continue
+			}
+			if atx < 0 {
+				continue
+			}
+
+			if aty >= Screen.height {
+				continue
+			}
+			if aty < 0 {
+				continue
+			}
+
+			let font Pixel32 =
+				textFontBitmap.pixels[(textChar.y + yi) * textFontBitmap.width + (textChar.x + xi)].ref
+
+			let p = Screen.pixels[aty * Screen.width + atx]
+			let p Pixel32 = p.ref
+			p.rgba.ref.r = blend255(p.rgba.ref.r, color.rgba.ref.r, font.rgba.ref.r)
+			p.rgba.ref.g = blend255(p.rgba.ref.g, color.rgba.ref.g, font.rgba.ref.g)
+			p.rgba.ref.b = blend255(p.rgba.ref.b, color.rgba.ref.b, font.rgba.ref.b)
+
+			// Grayscale
+			// TODO probably just blend color.rgb all with p.g?
+			var sum UInt16 =
+				(p.rgba.ref.r as! UInt16) +
+				(p.rgba.ref.g as! UInt16) +
+				(p.rgba.ref.b as! UInt16)
+			sum = (sum * 0.33) as! UInt16
+
+			p.rgba.ref.r = sum as! UInt8
+			p.rgba.ref.g = sum as! UInt8
+			p.rgba.ref.b = sum as! UInt8
+
+			p.rgba.ref.a = color.rgba.ref.a
+			blendPixel(atx, aty, p)
+		}
+	}
+
+	return textChar.width
+}
+
+/// Returns advance after last character
+fun drawAsciiText(text String, x Float, y Int16, color Pixel32) UInt16 {
+	var i UInt16 = 0
+	var xx Float = x
+	let text = text.utf16() as! ConstArrayPointer<ClangWideChar>
+
+	while text[i] as! UInt16 != 0 and i < 255 * 255 {
+		xx += drawChar((text[i] as! UInt16) & 0xFF as! UInt8, xx, y, color)
+		i++
+	}
+
+	return (xx - x) as! UInt16
+}
+
+/// Returns advance after last character
+/// Better use `drawTextBox` instead
+fun drawText(text String, x Float, y Int16, color Pixel32) UInt16 {
+	var i UInt16 = 0
+	var xx Float = x
+	// TODO compare for `length` not `255 * 255`
+	// TODO take pointer to `.utf16`
+
+	// TODO bad code gen cause optional->u16 `while (text.charCodeAt(i) as! UInt16) != 0 and i < 255 * 255 {`
+	// TODO same `while text.charCodeAt(i) != 0 and i < 255 * 255 {`
+	while text.utf16()[i] as! UInt16 != 0 and i < 255 * 255 {
+		xx += drawChar((text.charCodeAt(i) as! UInt16) & 0xFF as! UInt8, xx, y, color)
+		i++
+	}
+
+	return (xx - x) as! UInt16
+}
+
+/// Returns advance after last character
+// TODO respect `h`
+fun drawTextBox(text String, x Float, y Int16, color Pixel32, w UInt16, h UInt16, ellipsis Bool, alpha Bool = false) UInt16 {
+	var i UInt16 = 0
+	var xx Float = x
+
+	var ellipsisWidth = 0.0
+	if ellipsis {
+		// TODO cache & use advance of whole "..."
+		ellipsisWidth = getCharAdvance(46) // '.'.charCodeAt(0)
+		* 3
+	}
+
+	var end = xx + w - ellipsisWidth
+
+	// TODO compare for `length` not `255 * 255`
+	// TODO take pointer to `.utf16`
+	var previousCode = 0u16
+
+	// TODO bad code gen cause optional->u16 `while (text.charCodeAt(i) as! UInt16) != 0 and i < 255 * 255 {`
+	// TODO same `while text.charCodeAt(i) != 0 and i < 255 * 255 {`
+	while text.utf16()[i] as! UInt16 != 0 and i < 255 * 255 {
+		let code = (text.charCodeAt(i) as! UInt16) & 0xFF as! UInt8
+		if xx + getCharAdvance(code) > end {
+			// Has spare chars
+			// Ignore SPACE cause `text ...` looks weird
+			if previousCode == 32 {
+				xx -= getCharAdvance(32)
+			}
+			drawTextBox("...", xx, y, color, 128, 128, false, alpha)
+			break
+		}
+
+		xx += alpha? drawAlphaChar(code, xx, y, color) : drawChar(code, xx, y, color)
+		previousCode = code
+
+		i++
+	}
+
+	return (xx - x) as! UInt16
+}
+
+let digits [String] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+fun drawIntegerText(value Int64, x Float, y Int16, color Pixel32) UInt16 {
+	var xx Float = x
+	var value = value as! Int
+
+	if value < 0 {
+		xx += drawAsciiText("-", xx, y, color)
+		value = -value
+	}
+
+	let chars [String] = []
+	var count Int8 = 0
+
+	do {
+		chars[23 - count] = digits[value % 10]
+		value = (value / 10) as! Int
+		// TODO `\`
+		count++
+	} while (value > 0)
+
+	for i in 24 {
+		if chars[i] != null {
+			xx += drawAsciiText(chars[i], xx, y, color)
+		}
+	}
+
+	return (xx - x) as! UInt16 // TODO `round`
+}
+
+// TODO multiline and wrap
+/// Use this to render file names on desktop, other use cases currently are not assumed
+fun drawShadowText(text String, x Float, y Int16, w UInt16, primaryColor Pixel32) {
+	var color = new ByValue<Pixel32>()
+	var color = color.ref
+	// Used to align at center
+	let advance = getTextAdvance(text)
+	let offset = advance > w ? 0 : (w / 2) - (advance / 2)
+
+	color.color = 0x00000000
+	color.rgba.ref.a = 70
+
+	// Shadow
+	// TODO Hexa: ensure `Float + 1` assumes `1.0` here, not `1i32`
+	drawTextBox(text, offset + x + 1, y + 1i16, color, w, 32u16, true, true)
+	drawTextBox(text, offset + x + 1, y + 2i16, color, w, 32u16, true, true)
+	drawTextBox(text, offset + x - 1, y + 1i16, color, w, 32u16, true, true)
+	drawTextBox(text, offset + x - 1, y + 2i16, color, w, 32u16, true, true)
+
+	// Primary text
+	drawTextBox(text, x + offset, y, primaryColor, w, 32u16, true, alpha: false)
+	// // TODO `while let char = .charCodeAt(i)`
+	// while text[i] as! UInt16 != 0 and i < 255 * 255 {
+	// var ch UInt8 = text[i] as! UInt8
+	// // TODO charCodeAt return zero? oh wait, `while let` checks for null!
+	//
+	// drawAlphaChar(ch, xx + 1, y + 1i16, color)
+	// drawAlphaChar(ch, xx + 1, y + 2i16, color)
+	//
+	// drawAlphaChar(ch, xx - 1, y + 1i16, color)
+	// xx += drawAlphaChar(ch, xx - 1, y + 2i16, color)
+	//
+	// i++
+	// }
+}

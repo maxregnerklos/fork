@@ -1,0 +1,612 @@
+// The Tofita Engine
+// Copyright (C) 2022-2025 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// TODO rename self to builder.hexa
+let fs = require('fs')
+// TODO typed imports
+let path = require('path')
+let child_process = require('child_process') // TODO `require('node:child_process')`
+
+// Tasks
+var cleanupTask = false
+var asmTask = false
+var efiTask = false
+var dllTask = false
+var engineTask = false
+var ramDiskTask = false
+var isoTask = false
+var useCpp = false
+// TODO ^ update readme if it calls build script
+
+// Removes folder recursively
+fun deleteFolderRecursive(path, noRemoveSelf Bool = false) {
+	if fs.existsSync(path) {
+		fs.readdirSync(path).forEach(fun (file, index) {
+				let curPath = path + "\\" + file
+				if fs.lstatSync(curPath).isDirectory() {
+					deleteFolderRecursive(curPath)
+				} else {
+					fs.unlinkSync(curPath)
+				}
+			})
+		// Fixes some random errors
+		if noRemoveSelf != true {
+			// fs.rmdirSync(path)
+			fs.rmSync(path, { recursive: true, force: true })
+		}
+	}
+}
+
+// Modes
+var debuggie Bool = false
+var strict Bool = false
+
+let config Config = JSON.parse(fs.readFileSync('config.json').toString())
+let tasks [String] = process.argv.slice()
+let llvm = 'LLVM-14.0.6-2'
+tasks.shift()
+tasks.shift()
+let teapot = "..\\TEAPOT"
+let nasm = '\(teapot)\\nasm-2.14.02\\nasm'
+let clang = '\(teapot)\\\(llvm)\\bin\\clang.exe'
+let link = '\(teapot)\\\(llvm)\\bin\\lld-link.exe'
+let xorriso = '\(teapot)\\xorriso-1.5.2\\xorriso.exe'
+let mmd = '\(teapot)\\mtools\\mmd.exe'
+let mcopy = '\(teapot)\\mtools\\mcopy.exe'
+let libgen = '\(teapot)\\libgen.exe'
+
+// NOTE Splitting into separate lines helps review process
+let warn = if config.warnings {
+	// TODO use task `warn` instead of json config
+	[
+		"-Wall",
+		"-Wextra",
+		"-Werror",
+		"-ferror-limit=1000"
+	].join(' ')
+} else {
+	"-w"
+} + ' '
+
+// CPU support
+let enabledFeatures = '-msse -msse2 -msse3 -mpopcnt -mcx16 -msahf -mprfchw '
+// TODO 4.2?
+let disabledFeatures = '-mno-ssse3 -mno-sse4a -mno-sse4.1 -mno-sse4.2 -mno-sse4 '
+
+// Security and safety
+let optimizationFeatures = '-O2 -fwrapv -fno-strict-aliasing -fno-strict-overflow -mtune=nocona '
+
+let today = new Date()
+let month = today.getMonth() + 1
+let versionMajor = today.getFullYear()
+let versionMinor = month
+let versionTag = today.getDate()
+let versionRolling = versionMajor * 10000 + versionMinor * 100 + versionTag
+let versionName = today.getFullYear() + '.' + month + '.' + today.getDate()
+
+if tasks.length == 0 {
+	console.log('No tasks defined')
+}
+
+console.log("[Tasks: \(tasks.join(', '))]")
+
+for folder in ['NjRAA', 'Tongue', 'Greentea', 'Teapot'] {
+	if not fs.existsSync('..\\' + folder) {
+		console.error('Folder ..\\\(folder) is not present. You should download this repo from GitHub.')
+		process.exit(123)
+		break
+	}
+}
+
+// TODO remove this
+for task in ['tasks'] {
+	let folder = config.tempFolder + tea
+
+	switch task {
+		case 'clang-format':
+			{
+				let clang = '\(teapot)\\\(llvm)\\bin\\clang-format'
+				let files [String] = []
+
+				fun formatFolderRecursive(path) {
+					if fs.existsSync(path) {
+						fs.readdirSync(path).forEach(fun (file, index) {
+								let curPath = path + "\\" + file
+								if fs.lstatSync(curPath).isDirectory() {
+									formatFolderRecursive(curPath)
+								} else {
+									if curPath.indexOf('external\\') == -1, curPath.endsWith('.c') or curPath.endsWith('.hpp') {
+										files.push(curPath)
+									}
+								}
+							})
+					}
+				}
+
+				formatFolderRecursive('.')
+
+				require('child_process').execSync(
+					clang + ` -i -style=file ` + files.join(' '), { stdio: 'inherit' }
+				)
+
+				console.log('clang-format ' + files.length + ' files')
+			}
+		case _:
+	}
+}
+
+// Evaluate arguments
+for task in tasks {
+	let folder = config.tempFolder + tea
+	let begin = Date.now()
+
+	switch task {
+		case 'help':
+			// TODO print available commands
+			// TODO commands to enum, use meta-feature of enum keys here `switch.cases[String/Int/SimpleEnum/etc]`
+		case 'ci':
+			// TODO build + test here for unique file names, APIs unit tests etc
+		case 'debug':
+			console.log('[Debug mode is ON]')
+			// TODO no debug -> disable COM log for max perf
+			debuggie = true
+		case 'strict':
+			console.log('[Strict mode is ON]')
+			// TODO enables C++ & warnings
+			strict = true
+		case 'verbose':
+			// TODO
+		case 'experimental':
+			// TODO
+		case 'init-or-clean':
+			// TODO check the presence of other repos like Tongue etc at ../
+			// if they are at ./ than show recommendation
+			cleanupTask = true
+		case 'asm':
+			asmTask = true
+		case 'efi':
+			efiTask = true
+		case 'dll':
+			dllTask = true
+		case 'engine':
+			engineTask = true
+		case 'ramdisk':
+			// TODO ram-disk or assets
+			ramDiskTask = true
+		case 'iso':
+			isoTask = true
+		case 'risc64': // TODO
+		case 'arm64': // TODO
+			// TODO Hexa: disallow doc comment on non expr
+			{
+				/// TODO like this one
+			}
+		case 'cpp':
+			useCpp = true
+		case _: // TODO capture as `case task:`
+			console.log('[Unknown task \(task)]')
+	}
+}
+
+// let folder = config.tempFolder + tea // TODO this may be incorret eval order
+fun runTasks() {
+	let folder = config.tempFolder + tea
+	let begin = Date.now()
+
+	if cleanupTask {
+		// This is done upfront in sync
+		if not fs.existsSync(folder) {
+			fs.mkdirSync(folder)
+		}
+
+		// Cleanup
+		deleteFolderRecursive(folder, noRemoveSelf: true)
+		fs.copyFileSync('..\\Greentea\\assets\\tea.ico', folder + '\\icon.ico')
+		fs.copyFileSync('desktop.ini', folder + '\\desktop.ini')
+		require('child_process').execSync('cmd /c ATTRIB +S ' + folder, { stdio: 'inherit' })
+
+		// Create directory `tofita/spin-off/EFI/BOOT/`
+		let dirs = [
+			path.sep + teaFolder,
+			path.sep + 'spin-off',
+			path.sep + 'EFI',
+			path.sep + 'BOOT'
+		]
+
+		var path = config.tempFolder
+		for dir in dirs {
+			path += dir
+			if not fs.existsSync(path) {
+				fs.mkdirSync(path)
+			}
+		}
+
+		// Assets
+		let assets = folder + '\\spin-off\\TOFITA.DAT'
+		if fs.existsSync(assets) {
+			fs.unlinkSync(assets)
+		}
+	}
+
+	// var wave [String] = []
+	// let waves [String] = [wave] TODO wrong type, not `String`
+	let phase1 [String] = []
+	let phase2 [String] = []
+	let phase3 [String] = []
+
+	if asmTask {
+		// CR3 TRAMPOLINE
+		phase1.push(
+			nasm + ' -f win64 -o ' +
+			folder + '\\trampoline.o boot\\loader\\trampoline.asm'
+		)
+
+		// ENGINE
+		phase1.push(
+			nasm + (debuggie ? ' -g': '') + ' -f win64 -o ' +
+			folder + '\\tofita.asm.obj engine\\all.asm'
+		)
+
+		// SMP TRAPEZE
+		phase1.push(
+			nasm + ' -f bin -o ' +
+			folder + '\\trapeze.bin devices\\cpu\\trapeze.asm'
+		)
+
+		// DLL
+		phase1.push(
+			nasm + ' -f win64 -o ' +
+			folder + '\\tofita64.asm.obj dlls\\tofita64.asm'
+		)
+
+		phase1.push(
+			nasm + ' -f win32 -o ' +
+			folder + '\\tofita32.asm.obj dlls\\tofita32.asm'
+		)
+	}
+
+	if efiTask {
+		// Hexa
+		phase1.push('cmd /c hexa --output-folder ' + config.tempFolder + '/' + teaFolder + ' boot\\hexa.json')
+
+		// EFI
+		phase2.push(
+			[
+				clang + ' ',
+				'-target x86_64-pc-win32-coff -fno-stack-protector',
+				useCpp ? '-x c++ -std=c++2a': '-x c -std=gnu17',
+				'-fshort-wchar -mno-red-zone -w',
+				'-fomit-frame-pointer',
+				'-D versionRolling=' + versionRolling, // TODO used?
+				'-D versionName=\\"' + versionName + '\\"', // TODO used?
+				// TODO ^ do we need name anymore? iOS has no names
+				'-D versionMajor=' + versionMajor,
+				'-D versionMinor=' + versionMinor,
+				'-D versionTag=' + versionTag,
+				'-D HEXA_NO_PLATFORM_INCLUDES=1',
+
+				// TODO mno-sse avx etc DISABLE ALL FEATURES BUT SSE2
+				// SO CPUID CHECK WILL HANG BOOTLOADER WITH ERROR FOR SELECTED FEATURE
+
+				'-mno-ms-bitfields -fno-threadsafe-statics',
+				'-Wno-address-of-temporary',
+				'-fshort-wchar -mno-red-zone -O2 -ferror-limit=10',
+				' -c ',
+				config.tempFolder + '/' + teaFolder + '/uefi.c',
+				' -o ',
+				config.tempFolder + '/' + teaFolder + '/miniefi.o'
+			].join(' ')
+		)
+
+		// Note: this is also depends on `asm`
+		phase3.push(
+			[
+				link + ' ',
+				'-subsystem:efi_application -nodefaultlib -dll -entry:efi_main ',
+				config.tempFolder + '/' + teaFolder + '/trampoline.o ',
+				config.tempFolder + '/' + teaFolder + '/miniefi.o ',
+				' -out:',
+				config.tempFolder + '/' + teaFolder + '/spin-off/EFI/BOOT/BOOTX64.EFI'
+			].join('')
+		)
+	}
+
+	if dllTask {
+		// DLL
+		fun buildDLLs(bit String, arch String) {
+			for i in dlls.length {
+				// TODO per-32/64-arch
+				// TODO libgen txt list here, to .lib in phase 2
+				// TODO --define bit32
+				let dllsFolder = dlls[i] == 'tofita32' ? 'dlls': '..\\Caramel\\dlls'
+
+				if bit == '32' {
+					phase1.push('cmd /c hexa --output-folder ' + folder + ' --define bit64=false \(dllsFolder)\\\(dlls[i])\\hexa.json --target i386')
+				} else {
+					phase1.push('cmd /c hexa --output-folder ' + folder + ' --define bit64=true \(dllsFolder)\\\(dlls[i])\\hexa.json --target default')
+				}
+
+				// TODO refactor
+				var asm = ' '
+				if dlls[i] == 'ntdll' or dlls[i] == 'tofita32' {
+					asm = folder + '\\tofita\(bit).asm.obj '
+				}
+
+				let outobj = folder + '\\' + dlls[i] + '.' + bit + '_dll.obj'
+
+				// TODO output warnings! cause -x is unused
+				phase2.push(
+					[
+						clang + ' ',
+						'-m\(bit) -Xclang -flto-visibility-public-std -target \(arch)-pc-windows-msvc -nostdlib -nodefaultlibs -nostartfiles',
+						'-ffast-math -Wno-incompatible-library-redeclaration -Wno-absolute-value -s -w',
+						'-Wimplicit-function-declaration -O2 -c',
+						'-mtune=nocona -fno-stack-protector -mno-red-zone',
+						'-fno-rtti -fno-exceptions -fvisibility=default', // TODO hidden?
+						'-fno-stack-check',
+						// TODO -Waggressive-loop-optimizations
+						// TODO fwrapv
+						'-fshort-wchar',
+						'-mno-ms-bitfields -fno-threadsafe-statics',
+						'-ferror-limit=10',
+						'-Dbit\(bit)',
+						'-DHEXA_NO_PLATFORM_INCLUDES',
+						'-msse -msse2 -msse3 -mpopcnt -mcx16 -msahf -mprfchw',
+						'-mno-ssse3 -mno-sse4a -mno-sse4.1 -mno-sse4.2 -mno-sse4', // Unsupported by some targeted CPUs
+						// TODO useCpp, fix C build
+						useCpp ? '-x c++ -std=c++2a': '-x c -std=gnu17',
+						'-fomit-frame-pointer',
+						folder + '\\' + dlls[i] + '.' + bit + '.c',
+						'-o',
+						outobj
+					].join(' ')
+				)
+
+				// 32 bit is `86`
+				let machine = (bit == '32') ? '86': '64'
+
+				// Note: this is also depends on `asm`
+				phase3.push(
+					[
+						// TODO -visibility=hidden -fno-underscoring check if `/kill-at` keeps `@` from `asm()`
+						link + ' ',
+						'/DLL /WX /MACHINE:X\(machine) ',
+						// TODO Hexa: use `deps.map`
+						[
+							for dep in deps[i] config.tempFolder + '/' + teaFolder + '/!' + dep + '.' + bit + '.lib '
+						].join(''),
+						outobj + ' ',
+						asm,
+						'/out:',
+						config.tempFolder + '/' + teaFolder + '/' + dlls[i] + '.' + bit + '.dll'
+					].join('')
+				)
+			}
+		}
+
+		// 64-bit & 32-bit WoW64
+		buildDLLs('64', 'x86_64')
+		buildDLLs('32', 'i686')
+	}
+
+	if engineTask {
+		// Hexa
+		phase1.push('cmd /c hexa --output-folder ' + folder + ' hexa.json')
+
+		// ENGINE
+		phase2.push(
+			[
+				clang,
+				'-D versionRolling=' + versionRolling,
+				'-D versionName=\\"' + versionName + '\\"', // TODO too
+				'-D versionMajor=' + versionMajor,
+				'-D versionMinor=' + versionMinor,
+				'-D versionTag=' + versionTag,
+
+				'-mtune=nocona -fno-stack-protector -fshort-wchar -mno-red-zone ',
+				'-fno-stack-check ',
+				debuggie ? '-fvisibility=default': '-fvisibility=hidden',
+				'-Dbit64',
+				'-DHEXA_NO_PLATFORM_INCLUDES',
+				'-fno-rtti -fno-exceptions -ffreestanding ',
+				'-mno-ms-bitfields -fno-threadsafe-statics ',
+				enabledFeatures,
+				disabledFeatures,
+				'-m64 -target x86_64-pc-windows-gnu -nostdlib -nodefaultlibs ',
+				'-fno-pic -mcmodel=large ',
+				warn,
+				'-Wno-incompatible-library-redeclaration -Wno-absolute-value -Wimplicit-function-declaration ',
+				optimizationFeatures,
+				'-ffast-math -ferror-limit=10',
+				'-w',
+				debuggie ? '-fno-omit-frame-pointer': '-fomit-frame-pointer',
+				'-Wno-address-of-temporary',
+				debuggie ? '-g': '',
+				useCpp ? '-x c++ -std=c++2a': '-x c -std=gnu17',
+				'-c ' + config.tempFolder + '/' + teaFolder + '/tofita.c -o ',
+				config.tempFolder + '/' + teaFolder + '/tofita.obj '
+			].join(' ')
+		)
+
+		// Note: this is also depends on `asm`
+		phase3.push(
+			[
+				link + ' ',
+				debuggie ? '/debug:dwarf ': '',
+				'/FIXED ', // Disable relocations
+				// Uncomment for some info '/verbose ',
+				'/WX /MACHINE:X64 /entry:engineMain /SUBSYSTEM:CONSOLE ',
+				'/BASE:0xffff800000000000 ',
+				config.tempFolder + '/' + teaFolder + '/tofita.asm.obj ',
+				config.tempFolder + '/' + teaFolder + '/tofita.obj ',
+				'/out:',
+				config.tempFolder + '/' + teaFolder + '/tofita.exe'
+			].join('')
+		)
+	}
+
+	process.stdout.write('[Processing...]\n')
+
+	var currentWave = phase1
+	var busy = 0
+	var maxBusy = 0
+
+	fun evaluate() {
+		if busy == 0 and currentWave.length == 0 {
+			// TODO `switch wave case (firstWave):` match by value
+			if currentWave == phase1 {
+				// LIB GEN
+				for i in dlls.length {
+					let named = dlls[i]
+					// let items64 = fs.readFileSync(config.tempFolder + '\\' + teaFolder + '\\\(named).64.c.dllExport.txt').toString()
+					// let items32 = fs.readFileSync(config.tempFolder + '\\' + teaFolder + '\\\(named).32.c.dllExport.txt').toString()
+					let gen = (
+						' file %bit %named ' + config.tempFolder + '/' + teaFolder + '/!%named.%bit.lib '
+					)
+					// TODO Hexa: }catch e: Any {} `:`
+					// try {fs.unlinkSync(config.tempFolder + '/' + teaFolder + '/!\(named).64.lib')}catch e: Any {}
+					// try {fs.unlinkSync(config.tempFolder + '/' + teaFolder + '/!\(named).32.lib')}catch e: Any {}
+
+					// phase2.push(libgen + (gen + items64).replaceAll('%named', named).replaceAll('%bit', '64'))
+					// phase2.push(libgen + (gen + items32).replaceAll('%named', named).replaceAll('%bit', '32'))
+
+					// Use files directly with newer libgen
+					let names64 = config.tempFolder + '\\' + teaFolder + '\\\(named).64.c.dllExport.txt'
+					let names32 = config.tempFolder + '\\' + teaFolder + '\\\(named).32.c.dllExport.txt'
+					phase2.push(libgen + (gen + names64).replaceAll('%named', named).replaceAll('%bit', '64'))
+					phase2.push(libgen + (gen + names32).replaceAll('%named', named).replaceAll('%bit', '32'))
+				}
+
+				currentWave = phase2
+			} else if currentWave == phase2 {
+				currentWave = phase3
+			} else if currentWave == phase3 {
+				currentWave = []
+			}
+		}
+
+		let cmd = currentWave.shift()
+
+		if let cmd = cmd {
+			child_process.exec(cmd, fun (error Bool?, stdout String, stderr String) {
+					if error != null {
+						console.log('[Build error] ' + cmd)
+						if '' != '' + stdout {
+							console.log(stdout)
+						}
+						if '' != '' + stderr {
+							console.log(stderr)
+						}
+						process.exitCode = 123
+						process.stdout.once('drain', fun () { process.exit(123) })
+						return
+					}
+
+					if '' != '' + stdout {
+						console.log(stdout)
+					}
+
+					busy--
+					evaluate()
+				})
+
+			busy++
+
+			if busy > maxBusy {
+				maxBusy = busy
+			}
+
+			if currentWave.length != 0 {
+				evaluate()
+			}
+		} else if busy == 0 {
+			if ramDiskTask {
+				packAssets(config)
+			}
+
+			if isoTask {
+				fs.copyFileSync(
+					'..\\Greentea\\assets\\autorun.ico',
+					folder + '\\spin-off\\autorun.ico')
+				fs.copyFileSync(
+					'..\\Greentea\\assets\\autorun.inf',
+					folder + '\\spin-off\\autorun.inf')
+				fs.copyFileSync(
+					'LICENSE',
+					folder + '\\spin-off\\LICENSE.txt')
+				fs.writeFileSync(
+					folder + '\\spin-off\\version.txt',
+					versionName
+				)
+
+				// Create floppy image
+				fs.copyFileSync(
+					'\(teapot)\\mtools\\disk-template.img',
+					folder + '\\DISK.IMG')
+				for cmd in [
+					mmd + ' -i ' + folder + '\\DISK.IMG ::/EFI',
+					mmd + ' -i ' + folder + '\\DISK.IMG ::/EFI/BOOT',
+					mcopy + ' -i ' + folder + '\\DISK.IMG ' + folder + '\\spin-off\\EFI\\BOOT\\BOOTX64.EFI ::/EFI/BOOT/BOOTx64.EFI',
+					mcopy + ' -i ' + folder + '\\DISK.IMG ' + folder + '\\spin-off\\TOFITA.DAT ::/TOFITA.DAT',
+					mcopy + ' -i ' + folder + '\\DISK.IMG ' + folder + '\\spin-off\\version.txt ::/version.txt',
+					mcopy + ' -i ' + folder + '\\DISK.IMG LICENSE ::/LICENSE.txt',
+					mcopy + ' -i ' + folder + '\\DISK.IMG ..\\Greentea\\assets\\autorun.ico ::/autorun.ico',
+					mcopy + ' -i ' + folder + '\\DISK.IMG ..\\Greentea\\assets\\autorun.inf ::/autorun.inf'
+				] {
+					child_process.execSync(
+						cmd, { stdio: 'inherit' }
+					)
+				}
+
+				// Create disk image
+				fs.copyFileSync(
+					folder + '\\DISK.IMG',
+					folder + '\\spin-off\\DISK.IMG')
+
+				let path = '/cygdrive/' + folder.split(':').join('')
+				/// EFI partition type
+				let efi = '0xef'
+				child_process.execSync(
+					[
+						xorriso,
+						'-as mkisofs -o \(path)/greenteaos-uefi64.iso -iso-level 3',
+						// TODO try to use .img not in spin-off folder to avoid duplication
+						'-V GTOS \(path)/spin-off',
+						'-append_partition 2 \(efi) \(path)/DISK.IMG',
+						'-e --interval:appended_partition_2:all::',
+						'-no-emul-boot'
+					].join(' '), { stdio: 'inherit' }
+				)
+			}
+
+			// Debuggers should catch .hexa files
+			if not debuggie {
+				let path = folder
+				fs.readdirSync(path).forEach(fun (file, index) {
+						if file.endsWith('.c') {
+							fs.unlinkSync(path + '\\' + file)
+						}
+					})
+			}
+
+			console.log("[All tasks finished in \(Date.now() - begin) ms, upto \(maxBusy) parallel tasks performed]")
+			process.stdout.once('drain', fun () { process.exit(0) })
+		}
+	}
+
+	evaluate()
+}
+
+runTasks() // Ahoy!

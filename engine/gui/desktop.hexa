@@ -1,0 +1,107 @@
+// The Tofita Engine
+// Copyright (C) 2022-2024 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// Maxregneros Desktop UI (Modern, Flat, Hardware-Accelerated)
+import engine.gui.compositor
+import engine.gui.theme
+import engine.gui.window
+
+class Desktop {
+	var windows: List<Window>
+	var compositor: Compositor
+	var theme: Theme
+
+	new () {
+		self.compositor = Compositor()
+		self.theme = Theme.current()
+		self.windows = []
+	}
+
+	fun draw() {
+		self.compositor.beginFrame()
+		for win in self.windows {
+			win.draw(self.compositor, self.theme)
+		}
+		self.compositor.endFrame()
+	}
+
+	fun addWindow(win: Window) {
+		self.windows.append(win)
+	}
+}
+
+// Example main loop (to be called from userland)
+fun main() {
+	let desktop = Desktop()
+	// Add sample windows, widgets, etc.
+	while (true) {
+		desktop.draw()
+		// handle input, window events, etc.
+	}
+}
+
+class Shortcut {
+	var displayName String
+	var file String
+	var icon Bitmap32
+	var rectangle ColliderRectangle
+	var link Bool = false
+	new () { }
+}
+
+var dragX = 255i16
+var dragY = 255i16
+// TODO Hexa: obvious typing fail `var drag = false` at `fun mouseMove`
+var drag Bool = false
+
+fun compositeDesktopSelectionRectangle(mouseX Int16, mouseY Int16) {
+	var color = new ByValue<Pixel32>()
+	color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = 0xFFu8
+	color.ref.rgba.ref.a = 64
+
+	// Keep origin left-top
+	let outlineX = mouseX < dragX ? mouseX : dragX
+	let outlineY = mouseY < dragY ? mouseY : dragY
+	let outlineW = mouseX < dragX ? dragX - mouseX : mouseX - dragX
+	let outlineH = mouseY < dragY ? dragY - mouseY : mouseY - dragY
+
+	if drag {
+		drawRectangleWithAlpha(color.ref, outlineX, outlineY, outlineW as! UInt16, outlineH as! UInt16)
+		drawRectangleOutline(color, outlineX, outlineY, outlineW as! UInt16, outlineH as! UInt16)
+	}
+}
+
+fun compositeDesktop(mouseX Int16, mouseY Int16) {
+	compositeDesktopSelectionRectangle(mouseX, mouseY)
+}
+
+fun handleMouseDownDesktop(type MouseActionType, mouseX Int16, mouseY Int16) {
+	if drag == false {
+		dragX = mouseX
+		dragY = mouseY
+	}
+	drag = true
+
+	haveToRender = haveToRender or drag
+}
+
+fun handleMouseUpDesktop(type MouseActionType, mouseX Int16, mouseY Int16) {
+	haveToRender = haveToRender or drag
+	drag = false
+}
+
+fun handleMouseMoveDesktop(mouseX Int16, mouseY Int16) {
+	haveToRender = haveToRender or drag
+}

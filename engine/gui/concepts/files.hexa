@@ -1,0 +1,286 @@
+// The Tofita Engine
+// Copyright (C) 2023 Oleh Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+// TODO this is a prototype, make it a user space app
+let files [Files] = []
+class Files {
+	var dir String
+	var window OverlappedWindow
+	let shortcuts [Shortcut] = []
+	let zone ColliderRectangle = new ColliderRectangle(0, startPinHandler) // TODO handler for selection
+
+	new (path String) {
+		(files as! [Files]).push(this) // TODO Hexa
+		this.dir = path
+
+		// TODO `\r`
+		// Check if it's a folder
+		if path.utf16()[path.length - 1] as! UInt16 == 13u16 {
+			window = createWindow()
+			loadFiles()
+			repaint()
+		} else {
+			// TODO Hexa: `defaultSession_->openFile_(path_, path_);`
+			// defaultSession.openFile(path, path)
+			// When `fun openFile(file String, displayName String) {` return type is note set
+			(defaultSession as! GraphicalSession).openFile(path, path)
+		}
+	}
+
+	fun createWindow() OverlappedWindow {
+		let window OverlappedWindow = overlappedWindow_create(0)
+		window.title = "Files"
+		// TODO handle very long text
+		window.width = 740
+		window.height = 520
+		window.x = (Screen.width / 2) - (window.width / 2i16)
+		window.y = (Screen.height / 2) - (window.height / 2i16)
+		window.visible = true
+		window.icon = leaves16
+		window.hWnd = window.windowId as! Handle
+
+		// Setup buffer
+		let bytes = window.width * window.height * sizeOf<Pixel32>()
+		window.fbZeta = allocatePageAlignedBitmap(window.width, window.height)
+		memset(window.fbZeta.pixels as! ArrayPointer<UInt8>, 0x33, bytes)
+		window.fbCurrentZeta = true
+		window.fbGama = window.fbZeta // TODO
+
+		// Setup interaction
+		zone.relativeX = 190i16
+		zone.width = window.width - zone.relativeX
+		zone.height = window.height - 64i16
+		zone.relativeY = 32i16
+
+		// Go
+		overlappedWindow_attach(window.windowId)
+
+		return window
+	}
+
+	fun loadFiles() {
+		let dirBase = dir.substr(0, dir.length - 1) + "/"
+		let asset = getRamDiskAsset(dir)
+		let filesList = getRamDiskFolder(asset)
+		// TODO for file in filesList {
+		for file in filesList.length {
+			let file = filesList[file]
+			let shortcut = new Shortcut()
+			shortcut.displayName = file
+			shortcut.file = dirBase + file
+			shortcut.icon = unknown48
+			let rectangle = new ColliderRectangle(0, startPinHandler) // TODO
+			shortcut.rectangle = rectangle
+			// TODO Hexa: must error! shortcut.rectangle.hint = shortcut.displayName
+			shortcuts.push(shortcut)
+			zone.children.push(rectangle)
+			// TODO shortcut.rectangle.hint = hintOfPin
+			guessIcon(shortcut)
+		}
+	}
+
+	fun drawItems(x Int16, y Int16, w Int16, h Int16) Void {
+		let yOffset = 12i16 + 48i16 + 10i16 + 4i16 + 16i16
+		let startX = 10 + x
+		var xu = startX
+		var yu = 12 + y
+		let color = new ByValue<Pixel32>()
+
+		color.ref.rgba.ref.a = 100
+		color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = 0x61u8
+		let hoverColor = color
+		let holdColor = color
+		holdColor.ref.rgba.ref.a = 64
+
+		for i in shortcuts.length {
+			let shortcut = shortcuts[i]
+			let rectangle = shortcut.rectangle
+
+			rectangle.relativeX = xu - x
+			rectangle.relativeY = yu - 2 + 24 - y
+			rectangle.width = 76i16
+			rectangle.height = 78i16
+
+			if rectangle.mouseOver {
+				drawRectangleWithAlpha(
+					rectangle.mouseHold? holdColor.ref : hoverColor.ref,
+					x + rectangle.relativeX,
+					y - 25 + rectangle.relativeY,
+					rectangle.width + 0u16,
+					rectangle.height + 0u16
+				)
+			}
+
+			drawBitmap32WithAlpha(shortcut.icon, 14i16 + xu, yu)
+
+			color.ref.color = 0x00000000
+			let shadowTextWidth = 76u16 - 8u16
+			let textX = 2 + xu
+			color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = 0xFFu8
+			drawShadowText(shortcut.displayName, textX, 62i16 + yu, shadowTextWidth, color.ref)
+
+			// Grid
+			xu += yOffset
+
+			if xu + yOffset > x + w {
+				xu = startX
+				yu += yOffset
+			}
+
+			if yu > y + h {
+				break
+			}
+		}
+	}
+
+	// TODO take theme parameters from the system, repaint on theme change
+	fun repaint() {
+		// Paint
+		let screenWidth = Screen.width
+		let screenHeight = Screen.height
+		let screenPixels = Screen.pixels
+
+		// TODO function like `setBitmapAsCurrentScreen()`
+		Screen.width = window.width
+		Screen.height = window.height
+		Screen.pixels = window.fbZeta.pixels
+
+		let color = new ByValue<Pixel32>()
+
+		// Cleanup
+		color.ref.color = 0x33333333u32
+		drawRectangle(color, 0, 0, window.width, window.height)
+
+		// TODO light theme
+		color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = 0xFFu8
+		drawShadowText(
+			"This is not a final design",
+			4,
+			9i16,
+			window.width - 6,
+			color.ref
+		)
+		drawShadowText(
+			dir,
+			4,
+			window.height + 2 - 24i16,
+			window.width / 2,
+			color.ref
+		)
+
+		drawText("Desktop", 34, zone.relativeY + 9i16 + 6i16, color.ref)
+		drawBitmap32WithAlpha(startSearchOutIcon, 6i16, zone.relativeY + 8i16)
+
+		let offset = 25i16
+		drawText("Documents", 34, zone.relativeY + offset + 9i16 + 6i16, color.ref)
+		drawBitmap32WithAlpha(startSearchOutIcon, 6i16, zone.relativeY + offset + 8i16)
+
+		drawText("Downloads", 34, zone.relativeY + offset * 2 + 9i16 + 6i16, color.ref)
+		drawBitmap32WithAlpha(startSearchOutIcon, 6i16, zone.relativeY + offset * 2 + 8i16)
+
+		drawBitmap32WithAlpha(startSearchOutIcon, window.width + 2 - 32i16, window.height - 28i16)
+		drawBitmap32WithAlpha(startSearchOutIcon, window.width + 2 - 58i16, window.height - 28i16)
+
+		drawItems(zone.relativeX, zone.relativeY, zone.width, zone.height)
+		color.ref.color = 0x126099FF
+		drawRectangleOutline(color, zone.relativeX, zone.relativeY, zone.width + 1u16, zone.height + 0u16)
+		color.ref.rgba.ref.a = 100
+		color.ref.rgba.ref.r = color.ref.rgba.ref.g = color.ref.rgba.ref.b = 0x61u8
+		drawRectangleWithAlpha(
+			color.ref,
+			0,
+			32i16,
+			zone.relativeX + 0u16,
+			zone.height + 0u16
+		)
+
+		Screen.width = screenWidth
+		Screen.height = screenHeight
+		Screen.pixels = screenPixels
+	}
+
+	static fun hintOfFile(id UInt64) String {
+		// let key = "HKCR\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\Instance\{" + id.toString() + "}\TaskbarInfo"
+		// let taskbarInfo = readRegistryKey(key)
+		// TODO Hexa: if taskbarInfo.isNull { return "" }
+		// return String.fromWideString(taskbarInfo.ref.data)
+		return ''
+	}
+
+	static fun guessIcon(shortcut Shortcut) Void {
+		let file String = shortcut.file
+
+		if file.utf16()[file.length - 1] as! UInt16 == 13u16 {
+			// TODO substr folder flag
+			shortcut.icon = folder48
+		} else {
+			// TODO Hexa: write test case `if file.utf16()[file.length - 1] as! UInt16 == 101 {`
+			// TODO case insensitive
+			if file.endsWith(".exe") {
+				// TODO read real icon
+				shortcut.icon = app48
+				// Name without `.exe` part TODO theme-configurable
+				// displayName = displayName.substr(0, displayName.length - 4)
+				// if let icon = getExeIconFromPath(shortcut.file) {
+				// // TODO Hexa: `?? app48`
+				// shortcut.icon = icon
+				// }
+				let icon = getExeIconFromPath(shortcut.file)
+				if icon != null {
+					shortcut.icon = icon as! Bitmap32
+				}
+			} else if file.endsWith(".dll") {
+				// TODO read real icon (some .dll files have them)
+				shortcut.icon = dll48
+			} else {
+				// TODO real preview for pics
+				if file.endsWith(".md") or file.endsWith(".txt") {
+					shortcut.icon = notepad48
+				} else if file.endsWith(".ico") or file.endsWith(".png") or file.endsWith(".jpg") {
+					shortcut.icon = picture48
+				} else if file.endsWith(".lnk") {
+					shortcut.link = true
+					// Name without `.lnk` part
+					shortcut.displayName = shortcut.displayName.substr(0, shortcut.displayName.length - 4)
+					// TODO get icon for pointed file
+					if shortcut.displayName.endsWith(".exe") {
+						shortcut.icon = app48
+					} else {
+						// TODO icon of pointed file
+					}
+				}
+			}
+		}
+	}
+
+	fun handleEvent(message Msg) {
+		if message.message == Message.WM_CLOSE {
+			overlappedWindow_destroy(window.windowId)
+			window = null
+			return
+		}
+
+		if message.message == Message.WM_MOUSE_MOVE {
+			// Paint
+			let x = LParam.loWord(message.lParam as! UInt32)
+			let y = LParam.hiWord(message.lParam as! UInt32)
+			// Popup is topmost
+			if zone.trySendEvent(x as! Int16, y as! Int16, ColliderEventType.MouseMove) {
+				repaint()
+				requestAnimationFrame()
+			}
+		}
+	}
+}
